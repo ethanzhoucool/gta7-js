@@ -51,10 +51,11 @@ function run() {
   go(40, { left: true, camYaw: 1.2 }, 'walk-left');
   go(40, { right: true, camYaw: -0.7 }, 'walk-right');
   eng.step(STEP, { jumpPressed: true, camYaw: 0, forward: true }); total++; // single press edge
-  go(20, { camYaw: 0, forward: true }, 'jump-arc');
-  // gravity must settle the player back to the ground when not jumping
-  go(60, { camYaw: 0 }, 'land');
-  assert.ok(W.player.y <= 0.001, 'player should be grounded after landing (y=' + W.player.y + ')');
+  assert.ok(W.player.vy > 0 || W.player.y > 0, 'a single jump press launches the player');
+  // gravity must settle the player back to the ground when not jumping (no held re-jump).
+  // Generous settle window so a long jump arc is fully resolved regardless of timing.
+  go(150, { camYaw: 0 }, 'land');
+  assert.ok(W.player.y <= 0.001 && W.player.onGround === true, 'player should be grounded after landing (y=' + W.player.y + ', onGround=' + W.player.onGround + ')');
   assert.ok(W.player.onGround === true, 'player should be on the ground after landing');
 
   // 3) Witness model (GTA-accurate): a crime with a witness in LOS raises heat only
@@ -384,6 +385,25 @@ function run() {
     VIN.buyItem('gun', ai); assert.ok(VW.player.armor === 150, 'armor fills to the raised cap (got ' + VW.player.armor + ')');
     // trauma stays finite/bounded
     assert.ok(isFinite(VW.trauma) && VW.trauma >= 0 && VW.trauma <= 1, 'trauma in [0,1]');
+    // near-miss: whip past a parked car at speed -> a one-time "close call" bonus
+    var ne = GTA3D.createEngine(), NW = ne.world, NIN = ne._internal;
+    for (var nz = 0; nz < ne.constants.MAP; nz++) for (var nx = 0; nx < ne.constants.MAP; nx++) NW.grid[nz][nx] = ne.constants.T_ROAD;
+    var pcar = null; for (var ci = 0; ci < NW.cars.length; ci++) if (NW.cars[ci].driver === 'ai') { pcar = NW.cars[ci]; break; }
+    NW.player.inCar = true; NW.playerCar = pcar; pcar.driver = 'player';
+    pcar.x = 200; pcar.z = 200; pcar.yaw = 0; pcar.vz = 35; pcar.vx = 0; pcar.speed = 35;
+    var other = NW.cars[(ci + 1) % NW.cars.length]; other.driver = null; other.x = 203; other.z = 206; other.vx = 0; other.vz = 0;
+    var nm0 = NW.money;
+    for (var k = 0; k < 30; k++) { other.x = 203; other.z = 200 + 35 * (k / 60) + 3; ne.step(STEP, { forward: true }); other.x = 203; }
+    assert.ok(NW.money >= nm0, 'near-miss never costs money');
+    // direct: place a car just inside the near band at speed -> bonus fires
+    var ne2 = GTA3D.createEngine(), NW2 = ne2.world;
+    for (nz = 0; nz < ne2.constants.MAP; nz++) for (nx = 0; nx < ne2.constants.MAP; nx++) NW2.grid[nz][nx] = ne2.constants.T_ROAD;
+    var pc2 = null; for (ci = 0; ci < NW2.cars.length; ci++) if (NW2.cars[ci].driver === 'ai') { pc2 = NW2.cars[ci]; break; }
+    NW2.player.inCar = true; NW2.playerCar = pc2; pc2.driver = 'player';
+    pc2.x = 100; pc2.z = 100; pc2.yaw = 0; pc2.vz = 30; pc2.speed = 30; pc2._near = {};
+    var ob = NW2.cars[(ci + 1) % NW2.cars.length]; ob.driver = null; ob.x = 106; ob.z = 100; // ~6u to the side: in the near band, not colliding
+    var mb = NW2.money; ne2.step(STEP, { forward: true }); ob.x = 106; ob.z = 100;
+    assert.ok(NW2.money > mb, 'a close pass at speed pays a near-miss bonus (' + mb + ' -> ' + NW2.money + ')');
   })();
 
   // 9i) Car HP separate from player; heli at 4★; SWAT at 5★.

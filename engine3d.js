@@ -241,7 +241,7 @@
     }
     function makePickup(x, z, type) { return { x: x, z: z, type: type, id: (W._id = (W._id || 0) + 1) }; }
     // Impact magnitude per fx type → drives the renderer's screen-shake (trauma model).
-    var FX_TRAUMA = { explode: 0.55, kill: 0.32, spark: 0.12, blood: 0.14, jack: 0.2, crash: 0.4, muzzle: 0.05 };
+    var FX_TRAUMA = { explode: 0.55, kill: 0.32, spark: 0.12, blood: 0.14, jack: 0.2, crash: 0.4, muzzle: 0.05, nearmiss: 0.18 };
     function fx(type, x, y, z) {
       W.effects.push({ type: type, x: x, y: y, z: z, t: W.time }); if (W.effects.length > 64) W.effects.shift();
       var tr = FX_TRAUMA[type]; if (tr) W.trauma = Math.min(1, (W.trauma || 0) + tr); // renderer reads & decays it
@@ -763,6 +763,27 @@
       // ride
       W.player.x = car.x; W.player.z = car.z; W.player.yaw = car.yaw;
       runOverPeds(car, true);
+      nearMiss(car, dt);
+    }
+    // Burnout-style "CLOSE CALL": whip past another car at speed without hitting it ->
+    // a little fx + cash thrill. Tracks which cars are currently in the near band so it
+    // fires once per pass (on entry), not every frame.
+    var NEARMISS_BAND = 7, NEARMISS_SPEED = 22; // band must sit OUTSIDE the 2*CAR_RADIUS(=4) collision ring
+    function nearMiss(car, dt) {
+      if (Math.abs(car.speed) < NEARMISS_SPEED) return;
+      if (!car._near) car._near = {};
+      var band2 = NEARMISS_BAND * NEARMISS_BAND, hit2 = (CAR_RADIUS * 2 + 0.5) * (CAR_RADIUS * 2 + 0.5);
+      for (var i = 0; i < W.cars.length; i++) {
+        var o = W.cars[i]; if (o === car) continue;
+        var dd = d2(car.x, car.z, o.x, o.z);
+        var inBand = dd < band2 && dd > hit2;       // close, but not actually touching
+        if (inBand && !car._near[o.id]) {
+          car._near[o.id] = true;
+          var bonus = 25; W.money += bonus; popCash(bonus, (car.x + o.x) / 2, (car.z + o.z) / 2);
+          fx('nearmiss', car.x, 1, car.z);
+          post('@you', '😮 CLOSE CALL! +$' + bonus);
+        } else if (!inBand && dd > band2 * 1.5) { car._near[o.id] = false; } // reset once well clear
+      }
     }
 
     // Distance to the nearest car/player in a narrow cone directly ahead, or null.
