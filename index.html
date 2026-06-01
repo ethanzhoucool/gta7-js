@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GTA 7: JS — choose your version</title>
+  <style>
+    :root { --indigo: #1C1833; --lav: #D8CFFE; --gold: #ffd23f; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      min-height: 100%;
+      background: radial-gradient(1200px 600px at 50% -10%, #2a2350 0%, #14111f 55%, #0a0810 100%);
+      color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 32px; text-align: center;
+    }
+    h1 { font-size: clamp(40px, 9vw, 92px); margin: 0; letter-spacing: -2px;
+      background: linear-gradient(180deg, var(--gold), #ff8c42); -webkit-background-clip: text; background-clip: text; color: transparent;
+      text-shadow: 0 6px 30px rgba(255,140,66,.25); }
+    .sub { color: var(--lav); font-size: clamp(14px, 2.6vw, 20px); margin: 8px 0 4px; letter-spacing: 4px; text-transform: uppercase; }
+    .made { color: #6b6580; font-size: 13px; margin-bottom: 36px; }
+    .cards { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
+    a.card { text-decoration: none; color: #fff; width: 320px; max-width: 86vw; padding: 26px 24px; border-radius: 18px;
+      background: rgba(255,255,255,.045); border: 1px solid rgba(216,207,254,.18);
+      transition: transform .12s ease, border-color .12s ease, background .12s ease; display: block; }
+    a.card:hover { transform: translateY(-4px); border-color: var(--gold); background: rgba(255,255,255,.08); }
+    .badge { display: inline-block; font-size: 12px; letter-spacing: 1px; padding: 4px 10px; border-radius: 999px; margin-bottom: 14px; font-weight: 700; }
+    .b3d { background: rgba(57,211,83,.16); color: #6bf08a; }
+    .b2d { background: rgba(127,209,255,.16); color: #9ed8ff; }
+    .card h2 { margin: 4px 0 8px; font-size: 26px; }
+    .card p { margin: 0; color: #c6c2d6; font-size: 14px; line-height: 1.5; }
+    .card .note { margin-top: 14px; font-size: 12px; color: #8a86a0; }
+    .foot { margin-top: 34px; color: #6b6580; font-size: 12px; max-width: 560px; line-height: 1.6; }
+    kbd { background: #2a2742; border: 1px solid #443f63; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>GTA 7: JS</h1>
+  <div class="sub">Leonida</div>
+  <div class="made">An original GTA-style open-world game, built from scratch in pure JavaScript.</div>
+
+  <div class="cards">
+    <a class="card" href="game3d.html">
+      <span class="badge b3d">NEW · 3D</span>
+      <h2>Leonida 3D</h2>
+      <p>Third-person 3D city. Realistic-ish car physics, <b>carjacking</b> (yank the driver out),
+         reactive pedestrians, and a GTA-accurate witness/line-of-sight wanted system.</p>
+      <div class="note">Uses Three.js (WebGL) — needs internet on first load.</div>
+    </a>
+    <a class="card" href="game2d.html">
+      <span class="badge b2d">CLASSIC · 2D</span>
+      <h2>Liberty Script</h2>
+      <p>Top-down 2D sandbox. Dual protagonists, traffic &amp; police chases, heists, the social-media
+         "mirror" feed, density zones, and water hazards.</p>
+      <div class="note">Pure Canvas — fully offline, no dependencies.</div>
+    </a>
+  </div>
+
+  <div class="foot">
+    Controls (3D): <kbd>Click</kbd> to look · <kbd>WASD</kbd> move · <kbd>Shift</kbd> run · <kbd>Space</kbd> jump ·
+    <kbd>Click</kbd> shoot · <kbd>F</kbd> enter / carjack · <kbd>E</kbd> rob.
+    <br>This is an original homage — not affiliated with Rockstar Games.
+  </div>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "gta7-js",
+  "version": "2.0.0",
+  "description": "GTA 7: JS — an original top-down (2D) and third-person (3D) GTA-style open-world game in pure JavaScript.",
+  "private": true,
+  "scripts": {
+    "test": "node test/headless.js && node test/headless3d.js",
+    "test:2d": "node test/headless.js",
+    "test:3d": "node test/headless3d.js"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}
