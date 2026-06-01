@@ -69,7 +69,14 @@
   // Helicopter (4★+): hovers above the player and fires down; killable.
   var HELI_HP = 220, HELI_ALT = 24, HELI_SPEED = 30, HELI_FIRE_RANGE = 60, HELI_FIRE_CD = 0.55, HELI_DMG = 7;
 
-  var WANTED_MAX = 5, WITNESS_RANGE = 42, REPORT_DELAY = 3.0, SEARCH_GIVEUP = 8.0, DISGUISE_CD = 6.0;
+  var WANTED_MAX = 5, WITNESS_RANGE = 42, REPORT_DELAY = 3.0, DISGUISE_CD = 6.0;
+  // Per-star seconds cops keep searching (while unseen) before dropping one star. Higher
+  // stars persist far longer — a murder/heist manhunt doesn't evaporate like a fender-bender.
+  // (index = current wanted level; [2]=8.0 keeps the existing evade test identical.)
+  var SEARCH_GIVEUP_BY_STAR = [6.0, 9.0, 8.0, 14.0, 20.0, 30.0];
+  var SEARCH_GIVEUP = SEARCH_GIVEUP_BY_STAR[2]; // legacy alias (8.0) for any external reader
+  // Stars a crime is worth on its own (callers pass these to commitCrime).
+  var CRIME = { PETTY: 1, ASSAULT: 2, MURDER: 3, COP_KILL: 4, HEIST: 5 };
 
   var CAR_COLORS = [0xc0392b, 0x2980b9, 0x27ae60, 0xf39c12, 0x8e44ad,
                     0x16a085, 0xd35400, 0x2c3e50, 0x7f8c8d, 0xe84393];
@@ -366,7 +373,8 @@
       for (var i = 0; i < W.stores.length; i++) { var s = W.stores[i];
         if (s.cooldown <= 0 && d2(s.x, s.z, W.player.x, W.player.z) < 6 * 6) {
           var take = randInt(120, 320); W.money += take; popCash(take); s.cooldown = 45;
-          alertPolice(2, s.x, s.z);
+          alertPolice(CRIME.ASSAULT, s.x, s.z); // armed robbery floors heat to 2★ from cold
+          commitCrime(CRIME.ASSAULT, s.x, s.z); // repeat robberies while hot climb past 2
           post('@you', '💰 Robbed a store for $' + take + '!');
           post('@LeonidaPD', 'Armed robbery in progress. (2★)');
           return true;
@@ -635,7 +643,11 @@
       W.lkpX = x; W.lkpZ = z; W.lkpValid = true; W.searchTimer = 0;
       if (was === 0) post('@LeonidaPD', 'Suspect reported in ' + districtName(x, z) + '. (' + W.wanted + '★)');
     }
-    function commitCrime(level, x, z) {
+    // severity = stars this crime is worth (CRIME.*). Witnessed crimes escalate heat:
+    // floored to the crime's severity, plus a +1 climb for serious (>=ASSAULT) repeat
+    // offending while already hot — so a spree ratchets toward 5, petty crime doesn't.
+    function commitCrime(severity, x, z) {
+      severity = severity || CRIME.PETTY;
       var immediate = W.seen;
       for (var i = 0; i < W.peds.length; i++) {
         var p = W.peds[i];
@@ -643,11 +655,18 @@
         if (d2(p.x, p.z, x, z) < WITNESS_RANGE * WITNESS_RANGE && lineOfSight(p.x, p.z, x, z)) {
           p.panic = Math.max(p.panic, 3);
           if (W.wanted >= 1) immediate = true;
-          else if (!p.witness) { p.witness = true; p.reportTimer = REPORT_DELAY; p.reportLevel = Math.max(p.reportLevel, level); }
+          else if (!p.witness) { p.witness = true; p.reportTimer = REPORT_DELAY; p.reportLevel = Math.max(p.reportLevel, severity); }
+          else p.reportLevel = Math.max(p.reportLevel, severity); // a worse crime upgrades a pending report
         }
       }
       if (W.wanted >= 1) {
-        W.wanted = clamp(Math.max(W.wanted, level), 0, WANTED_MAX);
+        // floor to the crime's severity (a worse crime than your current heat jumps you
+        // up to its level), then a +1 ratchet for SERIOUS repeat offending — only when
+        // you're already at/above that severity, so a spree climbs toward 5 without the
+        // severity-floor itself double-counting. Clamped to WANTED_MAX.
+        var floored = Math.max(W.wanted, severity);
+        var bump = (severity >= CRIME.ASSAULT && W.wanted >= severity) ? 1 : 0;
+        W.wanted = clamp(floored + bump, 0, WANTED_MAX);
         if (immediate) { W.lkpX = x; W.lkpZ = z; W.lkpValid = true; W.searchTimer = 0; }
       }
     }
@@ -944,7 +963,7 @@
             p.stun = 0.6; p.panic = Math.max(p.panic, 3);
             p.x += fx2 * 1.2; p.z += fz2 * 1.2;
             fx('blood', p.x, 0.5, p.z);
-            if (byPlayer) commitCrime(1, p.x, p.z); // assault is still witnessed
+            if (byPlayer) commitCrime(CRIME.PETTY, p.x, p.z); // non-lethal bump, but witnessed
           } else {
             // lethal ram: kill and launch the corpse along the car's heading
             p.launchVx = fx2 * s * 0.4; p.launchVz = fz2 * s * 0.4;
@@ -964,7 +983,7 @@
       if (p.cop) { if (byPlayer) { W.kills++; W.money += randInt(15, 40); } return; }
       if (p.bounty) { if (byPlayer) { W.kills++; W.money += randInt(10, 30); } return; }
       if (p.gang !== undefined) { if (byPlayer) { W.kills++; W.money += randInt(10, 35); } return; }
-      if (byPlayer) { W.kills++; W.money += randInt(5, 25); if (wasW) post('@you', '🤫 Silenced a witness.'); commitCrime(2, p.x, p.z); }
+      if (byPlayer) { W.kills++; W.money += randInt(5, 25); if (wasW) post('@you', '🤫 Silenced a witness.'); commitCrime(CRIME.MURDER, p.x, p.z); }
     }
 
     /* ----- carjacking ----- */
@@ -997,7 +1016,7 @@
         c.npc = null;
         fx('jack', c.x, 1, c.z);
         post('@you', '🚗 Carjacked a ' + (drv.hostile ? 'very unhappy ' : '') + 'local.');
-        commitCrime(1, c.x, c.z); // witnessed grand theft auto
+        commitCrime(CRIME.PETTY, c.x, c.z); // witnessed grand theft auto
       }
       if (c.onFire || c.exploded) return; // can't commandeer a burning wreck
       c.driver = 'player'; W.playerCar = c; p.inCar = true; p.car = c;
@@ -1013,7 +1032,7 @@
       var amt = randInt(15, 60); W.money += amt; popCash(amt, p.x, p.z); p.robbedCd = 12; p.panic = 4;
       if (p.tough && Math.random() < 0.6) { p.hostile = true; p.panic = 0; }
       post('@you', 'Mugged a local for $' + amt + '. 💸');
-      commitCrime(1, p.x, p.z);
+      commitCrime(CRIME.PETTY, p.x, p.z);
     }
 
     /* ----- shooting ----- */
@@ -1038,7 +1057,7 @@
       }
       fx('muzzle', ox + Math.sin(yaw) * 2, oy, oz + Math.cos(yaw) * 2);
       for (var i = 0; i < W.peds.length; i++) { var q = W.peds[i]; if (q.alive && d2(q.x, q.z, p.x, p.z) < 40 * 40) { if (q.tough && Math.random() < 0.4) q.hostile = true; else q.panic = 3; } }
-      commitCrime(1, p.x, p.z);
+      commitCrime(CRIME.PETTY, p.x, p.z); // firing in the open is petty; a kill upgrades it via killPed
     }
     function updateBullets(dt) {
       for (var i = W.bullets.length - 1; i >= 0; i--) {
@@ -1100,6 +1119,12 @@
       var dpl = dist(car.x, car.z, W.player.x, W.player.z);
       if (dpl < 6) { var prevInCar = W.player.inCar; if (prevInCar && W.playerCar === car) { car.driver = null; W.player.inCar = false; W.player.car = null; W.playerCar = null; } hurtPlayer(45 * (1 - dpl / 6), 0.3); }
       for (var i = 0; i < W.peds.length; i++) { var q = W.peds[i]; if (q.alive && d2(q.x, q.z, car.x, car.z) < 6 * 6) killPed(q, false); }
+      // A vehicle going up near the player reads as heist-tier mayhem. Already hot ->
+      // ratchet toward 5; cold start -> a 3-star response. Far-off AI wrecks stay silent.
+      if (dpl < WITNESS_RANGE) {
+        if (W.wanted >= 1) commitCrime(CRIME.HEIST, car.x, car.z);
+        else alertPolice(Math.min(WANTED_MAX, 3), car.x, car.z);
+      }
       car.onFire = false; car.carHp = 0; car.exploded = true; car.speed = 0; car.vx = 0; car.vz = 0;
     }
     function wasted() {
@@ -1132,7 +1157,8 @@
       if (W.seen) { W.lkpX = W.player.x; W.lkpZ = W.player.z; W.lkpValid = true; W.searchTimer = 0; }
       else if (W.wanted > 0) {
         W.searchTimer += dt;
-        if (W.searchTimer >= SEARCH_GIVEUP) { W.searchTimer = 0; W.wanted--; if (W.wanted <= 0) { W.wanted = 0; W.lkpValid = false; clearFootCops(true); W.helis = []; post('@LeonidaPD', 'Lost the suspect. 🚔💨'); } else post('@LeonidaPD', 'Narrowing the search… (' + W.wanted + '★)'); }
+        var giveUp = SEARCH_GIVEUP_BY_STAR[W.wanted] || SEARCH_GIVEUP; // higher stars persist longer
+        if (W.searchTimer >= giveUp) { W.searchTimer = 0; W.wanted--; if (W.wanted <= 0) { W.wanted = 0; W.lkpValid = false; clearFootCops(true); W.helis = []; post('@LeonidaPD', 'Lost the suspect. 🚔💨'); } else post('@LeonidaPD', 'Narrowing the search… (' + W.wanted + '★)'); }
       }
     }
     function clearFootCops(corpsesToo) {
@@ -1314,7 +1340,8 @@
       world: W,
       step: step,
       constants: { TILE: TILE, MAP: MAP, WORLD: WORLD, T_ROAD: T_ROAD, T_BUILDING: T_BUILDING, T_PARK: T_PARK,
-        CAR_HALF_L: CAR_HALF_L, CAR_HALF_W: CAR_HALF_W, PLAYER_HEIGHT: PLAYER_HEIGHT, WANTED_MAX: WANTED_MAX },
+        CAR_HALF_L: CAR_HALF_L, CAR_HALF_W: CAR_HALF_W, PLAYER_HEIGHT: PLAYER_HEIGHT, WANTED_MAX: WANTED_MAX,
+        CRIME: CRIME, SEARCH_GIVEUP_BY_STAR: SEARCH_GIVEUP_BY_STAR },
       _internal: { tryEnterExit: tryEnterExit, robNearest: robNearest, fireWeapon: fireWeapon, commitCrime: commitCrime,
         lineOfSight: lineOfSight, circleHitsSolid: circleHitsSolid, nearestCar: nearestCar, reset: reset, alertPolice: alertPolice,
         hurtPlayer: hurtPlayer, buyItem: buyItem, shopCatalog: shopCatalog, nearestShop: nearestShop, nearestProperty: nearestProperty,

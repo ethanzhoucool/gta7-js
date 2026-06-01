@@ -77,6 +77,31 @@ function run() {
     assert.ok(WW.wanted >= 1, 'witnessed crime should raise wanted after the report delay (got ' + WW.wanted + ')');
   })();
 
+  // 3b) Severity-based escalation: while already hot, a crime floors heat to its own
+  //     severity, and serious REPEAT offending (>= ASSAULT, already at that level)
+  //     ratchets +1 — petty crime never climbs past its floor; everything clamps to MAX.
+  (function severityCheck() {
+    var se = GTA3D.createEngine(), SW = se.world, C = se.constants.CRIME, cc = se._internal.commitCrime;
+    function at(w) { SW.wanted = w; return SW; }
+    var px = SW.player.x, pz = SW.player.z;
+    at(1); cc(C.MURDER, px, pz);  assert.strictEqual(SW.wanted, 3, 'murder while 1★ jumps to its severity (3), no double-bump (got ' + SW.wanted + ')');
+    at(2); cc(C.ASSAULT, px, pz); assert.strictEqual(SW.wanted, 3, 'repeat assault while at 2★ ratchets to 3 (got ' + SW.wanted + ')');
+    at(4); cc(C.PETTY, px, pz);   assert.strictEqual(SW.wanted, 4, 'petty crime never climbs past its floor (got ' + SW.wanted + ')');
+    at(4); cc(C.MURDER, px, pz);  assert.strictEqual(SW.wanted, 5, 'serious crime at high heat ratchets, clamped to 5 (got ' + SW.wanted + ')');
+    at(5); cc(C.HEIST, px, pz);   assert.strictEqual(SW.wanted, 5, 'heat clamps at WANTED_MAX (got ' + SW.wanted + ')');
+    at(0); cc(C.MURDER, px, pz);  assert.strictEqual(SW.wanted, 0, 'a crime while clean does not instantly escalate (witness must report) (got ' + SW.wanted + ')');
+  })();
+
+  // 3c) Per-star search persistence: higher wanted levels make the cops search LONGER
+  //     before giving up a star. A 4-star manhunt must outlast a 1-star one, and a
+  //     4-star search must take clearly longer than the old flat 8s give-up.
+  (function persistenceCheck() {
+    var G = GTA3D.createEngine().constants.SEARCH_GIVEUP_BY_STAR;
+    assert.ok(Array.isArray(G) && G.length >= 6, 'SEARCH_GIVEUP_BY_STAR exposed with a per-star entry');
+    assert.ok(G[4] > G[1], '4★ search should persist longer than 1★ (' + G[4] + ' vs ' + G[1] + ')');
+    assert.ok(G[4] > 8.0 && G[5] >= G[4], 'high-star manhunts outlast the old flat 8s give-up');
+  })();
+
   // 4) carjack: place an AI car next to the player and steal it (driver ejected)
   var ai = null;
   for (var c = 0; c < W.cars.length; c++) if (W.cars[c].driver === 'ai') { ai = W.cars[c]; break; }
