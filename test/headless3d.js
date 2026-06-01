@@ -393,6 +393,23 @@ function run() {
     VIN.buyItem('gun', ai); assert.ok(VW.player.armor === 150, 'armor fills to the raised cap (got ' + VW.player.armor + ')');
     // trauma stays finite/bounded
     assert.ok(isFinite(VW.trauma) && VW.trauma >= 0 && VW.trauma <= 1, 'trauma in [0,1]');
+
+    // any traffic/parked car is shootable now -> sustained fire ignites it
+    var sce = GTA3D.createEngine(), SCW = sce.world, SCIN = sce._internal;
+    for (var gz = 0; gz < sce.constants.MAP; gz++) for (var gx = 0; gx < sce.constants.MAP; gx++) SCW.grid[gz][gx] = sce.constants.T_ROAD;
+    for (var qi = 0; qi < SCW.peds.length; qi++) SCW.peds[qi].alive = false;
+    SCW.player.inCar = false; SCW.player.x = 150; SCW.player.z = 150; SCW.wanted = 0;
+    var tcar = null; for (var ti = 0; ti < SCW.cars.length; ti++) if (SCW.cars[ti].driver !== 'player') { tcar = SCW.cars[ti]; break; }
+    tcar.driver = null; tcar.x = 150; tcar.z = 166; tcar.onFire = false; tcar.exploded = false; tcar.carHp = undefined;
+    for (var s2 = 0; s2 < 200 && !tcar.onFire && !tcar.exploded; s2++) { SCW.player.x = 150; SCW.player.z = 150; tcar.x = 150; tcar.z = 166; SCW.fireCd = 0; sce.step(STEP, { shoot: true, aimYaw: 0 }); }
+    assert.ok(tcar.onFire || tcar.exploded, 'a normal car should be shootable and ignite under sustained fire');
+
+    // weapon tiers: pistol is the SLOW starter; bought guns fire faster / hit harder
+    var P = VIN.WEAPON_DEFS.pistol, SM = VIN.WEAPON_DEFS.smg, RF = VIN.WEAPON_DEFS.rifle;
+    assert.ok(P.cd > 0.3, 'pistol should be a slow semi-auto (cd=' + P.cd + ')');
+    assert.ok(SM.cd < P.cd, 'SMG should fire faster than the pistol');
+    assert.ok(RF.dmg > P.dmg, 'rifle should hit harder than the pistol');
+
     // near-miss: whip past a parked car at speed -> a one-time "close call" bonus
     var ne = GTA3D.createEngine(), NW = ne.world, NIN = ne._internal;
     for (var nz = 0; nz < ne.constants.MAP; nz++) for (var nx = 0; nx < ne.constants.MAP; nx++) NW.grid[nz][nx] = ne.constants.T_ROAD;

@@ -45,8 +45,8 @@
   var CAR_TOP_REV = 16;
   var CAR_DRAG = 0.9;       // air drag coefficient (∝ v)
   var CAR_ROLL = 4.0;       // rolling resistance
-  var CAR_GRIP = 7.0;       // lateral grip (higher = less drift)
-  var CAR_TURN = 2.7;       // max steer rate scale (rad/s at full authority)
+  var CAR_GRIP = 10.0;      // lateral grip (higher = less drift / more planted, less fishtail)
+  var CAR_TURN = 2.5;       // max steer rate scale (rad/s at full authority)
   var STEER_IN = 4.0;       // how fast steer eases toward the held A/D target (~0.25s to lock)
   var STEER_CENTER = 7.0;   // how fast steer returns to 0 when released (snappier straighten)
 
@@ -428,11 +428,13 @@
     // Multiple guns, bought at Ammu-Nation, switched with 1-4 / Q. Single-pellet
     // weapons fire dead-center (no jitter) so flat-fire tests stay exact; the
     // shotgun sprays pellets. fireWeapon reads the current weapon's stats.
+    // Pistol is the slow, reliable starter (semi-auto cadence); the bought guns are a
+    // real upgrade — SMG sprays fast, rifle hits hard + far, shotgun shreds up close.
     var WEAPON_DEFS = {
-      pistol:  { name: 'Pistol',  dmg: 34, cd: 0.16, pellets: 1, spread: 0,    range: 1.0 },
-      smg:     { name: 'SMG',     dmg: 16, cd: 0.07, pellets: 1, spread: 0,    range: 1.0 },
-      shotgun: { name: 'Shotgun', dmg: 14, cd: 0.55, pellets: 6, spread: 0.22, range: 0.7 },
-      rifle:   { name: 'Rifle',   dmg: 40, cd: 0.13, pellets: 1, spread: 0,    range: 1.4 }
+      pistol:  { name: 'Pistol',  dmg: 34, cd: 0.42, pellets: 1, spread: 0,    range: 1.0 },
+      smg:     { name: 'SMG',     dmg: 18, cd: 0.08, pellets: 1, spread: 0.03, range: 1.0 },
+      shotgun: { name: 'Shotgun', dmg: 16, cd: 0.7,  pellets: 7, spread: 0.22, range: 0.7 },
+      rifle:   { name: 'Rifle',   dmg: 46, cd: 0.18, pellets: 1, spread: 0,    range: 1.5 }
     };
     var WEAPON_ORDER = ['pistol', 'smg', 'shotgun', 'rifle'];
     function currentWeaponDef() { return WEAPON_DEFS[W.player.weapon] || WEAPON_DEFS.pistol; }
@@ -810,11 +812,21 @@
     function updateAiCar(car, dt) {
       car.aiRetarget -= dt;
       var ahead = 8;
-      if (car.aiRetarget <= 0 || solidAt(car.x + Math.sin(car.aiDir) * ahead, car.z + Math.cos(car.aiDir) * ahead)) {
+      // Prefer driving STRAIGHT; only turn when the road ahead is blocked or it's been
+      // a while — so traffic flows down streets instead of randomly jittering at every tile.
+      var blocked = solidAt(car.x + Math.sin(car.aiDir) * ahead, car.z + Math.cos(car.aiDir) * ahead);
+      if (blocked || car.aiRetarget <= 0) {
         var dirs = [0, Math.PI / 2, Math.PI, -Math.PI / 2], best = [];
-        for (var i = 0; i < dirs.length; i++) if (!solidAt(car.x + Math.sin(dirs[i]) * ahead, car.z + Math.cos(dirs[i]) * ahead)) best.push(dirs[i]);
-        if (best.length) car.aiDir = choice(best);
-        car.aiRetarget = rand(0.8, 2.6);
+        for (var i = 0; i < dirs.length; i++) {
+          var dd = dirs[i];
+          // avoid immediate U-turns unless that's the only option
+          if (!solidAt(car.x + Math.sin(dd) * ahead, car.z + Math.cos(dd) * ahead) && Math.abs(angDiff(dd, car.aiDir + Math.PI)) > 0.3) best.push(dd);
+        }
+        if (!best.length) { for (i = 0; i < dirs.length; i++) if (!solidAt(car.x + Math.sin(dirs[i]) * ahead, car.z + Math.cos(dirs[i]) * ahead)) best.push(dirs[i]); }
+        // strongly prefer keeping the current heading if it's still clear
+        if (!blocked && best.indexOf(car.aiDir) >= 0 && Math.random() < 0.7) { /* keep going straight */ }
+        else if (best.length) car.aiDir = choice(best);
+        car.aiRetarget = rand(2.0, 4.5); // commit to a heading longer
       }
       car.yaw = angTowards(car.yaw, car.aiDir, 3 * dt);
       // forward sensing: ease off / stop behind the car (or player) ahead
@@ -1038,6 +1050,15 @@
           for (var k = 0; k < W.police.length && !dead; k++) { var c = W.police[k]; if (d2(b.x, b.z, c.x, c.z) < 2.8 * 2.8 && b.y < 2.6) { c.hp -= (b.dmg || BULLET_DMG); fx('spark', b.x, b.y, b.z); if (c.hp <= 0) fx('explode', c.x, 1, c.z); dead = true; } }
           // helis hover overhead; flat bullets "shoot up" — hit on horizontal proximity
           for (var hh = 0; hh < W.helis.length && !dead; hh++) { var H = W.helis[hh]; if (d2(b.x, b.z, H.x, H.z) < 4 * 4) { H.hp -= (b.dmg || BULLET_DMG); fx('spark', b.x, b.y, b.z); dead = true; } }
+          // any traffic/parked car is shootable now: damage its carHp, ignite at 0 (GTA-style)
+          for (var cc = 0; cc < W.cars.length && !dead; cc++) { var ac = W.cars[cc]; if (ac.onFire || ac.exploded) continue;
+            if (d2(b.x, b.z, ac.x, ac.z) < 2.8 * 2.8 && b.y < 2.6) {
+              if (ac.carHp === undefined) ac.carHp = (ac === W.playerCar ? PCAR_HP : 90);
+              ac.carHp -= (b.dmg || BULLET_DMG); fx('spark', b.x, b.y, b.z);
+              if (ac.carHp <= 0) igniteCar(ac);
+              dead = true;
+            }
+          }
         } else if (!dead && b.team === 'police') {
           var pl = W.player; var rr = pl.inCar ? 2.2 : 1.2;
           if (d2(b.x, b.z, pl.x, pl.z) < rr * rr && b.y < 2.6) { hurtPlayer(b.dmg || 9, 0.12); fx('spark', b.x, b.y, b.z); dead = true; }
@@ -1071,7 +1092,7 @@
       if (car.onFire) return;
       car.onFire = true; car.fireTimer = rand(2.5, 4);
       fx('spark', car.x, 1, car.z);
-      post('@you', '🔥 Your ride is wrecked — bail out!');
+      if (car === W.playerCar) post('@you', '🔥 Your ride is wrecked — bail out!');
     }
     function explodeCar(car) {
       fx('explode', car.x, 1.2, car.z);
