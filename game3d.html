@@ -569,6 +569,9 @@
 
     // test probe: lets the mobile harness read the real input state touch handlers set
     window.__probe = function () { return { keys: keys, mouseDown: mouseDown, rmbDown: rmbDown, camYaw: camYaw, justF: justF, justE: justE }; };
+    // test hook: build the current input the way frame() does, then step the engine once,
+    // so harnesses can verify touch->input->engine deterministically (no rAF-timing race)
+    window.__stepWithInput = function () { eng.step(STEP, buildInput(true)); };
 
     var hintEl = document.getElementById('hint');
     function started() { return locked || W.time > 0.5; }

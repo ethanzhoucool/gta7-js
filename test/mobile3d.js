@@ -76,12 +76,12 @@ var PAGE = 'file://' + path.resolve(__dirname, '..', 'game3d.html');
     function mk(type, x, y) { var t = new Touch({ identifier: 2, target: TUI, clientX: x, clientY: y }); TUI.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: [t], changedTouches: [t], targetTouches: [t] })); }
     mk('touchstart', b.left + b.width / 2, b.top + b.height / 2); // hold fire -> sets mouseDown
     var down = window.__probe().mouseDown === true;
-    // the page's own rAF frame() calls buildInput()+step(); just wait a few frames
-    return new Promise(function (res) { setTimeout(function () {
-      var got = W.bullets.filter(function (x) { return x.team === 'player'; }).length;
-      mk('touchend', b.left + b.width / 2, b.top + b.height / 2);
-      res(down && got > 0);
-    }, 200); });
+    // deterministically push touch input through buildInput()+step(). Reset W.fireCd
+    // before each step so a competing rAF frame()'s cooldown can't starve all our shots.
+    var got = 0;
+    for (var i = 0; i < 12 && got === 0; i++) { W.fireCd = 0; window.__stepWithInput(); got = W.bullets.filter(function (x) { return x.team === 'player'; }).length; }
+    mk('touchend', b.left + b.width / 2, b.top + b.height / 2);
+    return down && got > 0;
   });
 
   // 5) ENTER button sets the carjack edge
