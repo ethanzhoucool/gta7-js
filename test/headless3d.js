@@ -45,16 +45,19 @@ function run() {
   assert.ok(W.player, 'player exists');
   assert.ok(W.cars.length > 0 && W.peds.length > 0, 'world populated');
 
-  // 2) walk in every camera-relative direction + run + jump
-  go(40, { forward: true, camYaw: 0, run: true }, 'walk-fwd');
-  go(40, { back: true, camYaw: 0 }, 'walk-back');
-  go(40, { left: true, camYaw: 1.2 }, 'walk-left');
-  go(40, { right: true, camYaw: -0.7 }, 'walk-right');
-  eng.step(STEP, { jumpPressed: true, camYaw: 0, forward: true }); total++; // single press edge
+  // 2) walk in every camera-relative direction + run + jump.
+  // Keep the player alive through this section: a random combat death (hostile ped
+  // etc.) would flip state to 'wasted', which freezes player physics mid-air and is
+  // not what the jump/landing assertion is testing.
+  function pinAlive() { W.player.hp = W.player.maxHp; W.player.armor = 100; W.wanted = 0; }
+  go(40, { forward: true, camYaw: 0, run: true }, 'walk-fwd', pinAlive);
+  go(40, { back: true, camYaw: 0 }, 'walk-back', pinAlive);
+  go(40, { left: true, camYaw: 1.2 }, 'walk-left', pinAlive);
+  go(40, { right: true, camYaw: -0.7 }, 'walk-right', pinAlive);
+  pinAlive(); eng.step(STEP, { jumpPressed: true, camYaw: 0, forward: true }); total++; // single press edge
   assert.ok(W.player.vy > 0 || W.player.y > 0, 'a single jump press launches the player');
   // gravity must settle the player back to the ground when not jumping (no held re-jump).
-  // Generous settle window so a long jump arc is fully resolved regardless of timing.
-  go(150, { camYaw: 0 }, 'land');
+  go(150, { camYaw: 0 }, 'land', pinAlive);
   assert.ok(W.player.y <= 0.001 && W.player.onGround === true, 'player should be grounded after landing (y=' + W.player.y + ', onGround=' + W.player.onGround + ')');
   assert.ok(W.player.onGround === true, 'player should be on the ground after landing');
 
@@ -109,11 +112,16 @@ function run() {
   //    reports, so the ONLY dynamic is the search-give-up decay — deterministic.
   (function evadeCheck() {
     var ee = GTA3D.createEngine(), EW = ee.world;
+    // stand at map center (away from gang zones, which sit in the corners) so tickZones
+    // can't re-aggro and re-raise heat mid-evade; clear witnesses + any active fugitive too.
+    EW.player.inCar = false; EW.player.x = ee.constants.WORLD / 2; EW.player.z = ee.constants.WORLD / 2;
+    EW.vigilante = null; EW.vigilanteCd = 999;
     EW.wanted = 2; EW.lkpX = EW.player.x; EW.lkpZ = EW.player.z; EW.lkpValid = true; EW.searchTimer = 0;
     var before = EW.wanted;
     var steps = Math.ceil((8 + 1.5) / STEP);
     for (var ev = 0; ev < steps; ev++) {
       ee.step(STEP, {});
+      EW.player.x = ee.constants.WORLD / 2; EW.player.z = ee.constants.WORLD / 2;
       EW.police = []; EW.seen = false;                     // never seen, no pursuers persist
       for (var wi = 0; wi < EW.peds.length; wi++) EW.peds[wi].witness = false;
     }

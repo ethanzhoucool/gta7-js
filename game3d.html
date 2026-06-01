@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>GTA 7: JS — Leonida 3D</title>
   <style>
     html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a0d14;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #fff; }
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #fff;
+      touch-action: none; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
     #c { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
     .ui { position: fixed; pointer-events: none; user-select: none; }
     #hud { left: 16px; top: 14px; }
@@ -50,6 +51,36 @@
     #shop .owned { color: #6bf08a; }
     #shop .pr { float: right; color: #9fd6ff; }
     #shop .shophint { margin-top: 8px; font-size: 11px; color: #8a86a0; }
+
+    /* ---------------- mobile touch HUD (shown only on touch devices) ---------------- */
+    #touchUI { position: fixed; inset: 0; display: none; z-index: 50; pointer-events: none;
+      user-select: none; -webkit-user-select: none; touch-action: none; }
+    body.touch #touchUI { display: block; }
+    body.touch #controls { display: none; }
+    body.touch #shop { pointer-events: auto; right: calc(env(safe-area-inset-right) + 12px); top: 84px; }
+    body.touch #mini { right: calc(env(safe-area-inset-right) + 12px); bottom: calc(env(safe-area-inset-bottom) + 12px); }
+    body.touch #hud { left: calc(env(safe-area-inset-left) + 12px); top: calc(env(safe-area-inset-top) + 10px); }
+    body.touch #stars { right: calc(env(safe-area-inset-right) + 14px); top: calc(env(safe-area-inset-top) + 8px); }
+    #tStickBase { position: absolute; width: 30vmin; height: 30vmin; max-width: 180px; max-height: 180px;
+      min-width: 112px; min-height: 112px; margin-left: -15vmin; margin-top: -15vmin; border-radius: 50%;
+      background: rgba(216,207,254,.10); border: 2px solid rgba(216,207,254,.35); display: none; }
+    #tStickKnob { position: absolute; width: 14vmin; height: 14vmin; max-width: 84px; max-height: 84px;
+      min-width: 52px; min-height: 52px; margin-left: -7vmin; margin-top: -7vmin; border-radius: 50%;
+      background: rgba(216,207,254,.55); border: 2px solid rgba(255,255,255,.6); display: none; }
+    .tbtn { position: absolute; pointer-events: auto; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; font: 700 12px -apple-system, Arial, sans-serif; color: #fff; text-shadow: 0 1px 2px #000;
+      background: rgba(20,24,34,.6); border: 2px solid rgba(216,207,254,.45); text-align: center; line-height: 1.05; }
+    .tbtn.held { background: rgba(216,207,254,.8); color: #0a0d14; transform: scale(.94); }
+    .tbtn.lg { width: 18vmin; height: 18vmin; max-width: 112px; max-height: 112px; min-width: 70px; min-height: 70px; }
+    .tbtn.sm { width: 14vmin; height: 14vmin; max-width: 88px; max-height: 88px; min-width: 58px; min-height: 58px; }
+    #tFire { right: calc(env(safe-area-inset-right) + 20px); bottom: calc(env(safe-area-inset-bottom) + 28px); background: rgba(180,40,40,.6); border-color: rgba(255,120,120,.6); }
+    #tAim  { right: calc(env(safe-area-inset-right) + 130px); bottom: calc(env(safe-area-inset-bottom) + 38px); }
+    #tJump { right: calc(env(safe-area-inset-right) + 28px); bottom: calc(env(safe-area-inset-bottom) + 148px); }
+    #tEnter{ right: calc(env(safe-area-inset-right) + 122px); bottom: calc(env(safe-area-inset-bottom) + 134px); }
+    #tRob  { left: calc(env(safe-area-inset-left) + 18px); bottom: calc(env(safe-area-inset-bottom) + 20px); }
+    #tShop { left: calc(env(safe-area-inset-left) + 100px); bottom: calc(env(safe-area-inset-bottom) + 20px); }
+    #tJob  { left: calc(env(safe-area-inset-left) + 18px); bottom: calc(env(safe-area-inset-bottom) + 104px); }
+    #tWep  { left: calc(env(safe-area-inset-left) + 100px); bottom: calc(env(safe-area-inset-bottom) + 104px); }
   </style>
 </head>
 <body>
@@ -71,6 +102,18 @@
   <div id="banner" class="ui"></div>
   <canvas id="mini" class="ui" width="170" height="170"></canvas>
   <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · <b>J job · 1-4/Q weapon</b></div>
+  <div id="touchUI">
+    <div id="tStickBase"></div>
+    <div id="tStickKnob"></div>
+    <div id="tFire"  class="tbtn lg" data-act="fire">FIRE</div>
+    <div id="tAim"   class="tbtn sm" data-act="aim">AIM</div>
+    <div id="tJump"  class="tbtn sm" data-act="jump">JUMP /<br>BRAKE</div>
+    <div id="tEnter" class="tbtn sm" data-act="enter">ENTER /<br>JACK</div>
+    <div id="tRob"   class="tbtn sm" data-act="rob">ROB</div>
+    <div id="tShop"  class="tbtn sm" data-act="shop">SHOP /<br>NEXT</div>
+    <div id="tJob"   class="tbtn sm" data-act="job">JOB</div>
+    <div id="tWep"   class="tbtn sm" data-act="wep">WEAPON</div>
+  </div>
   <div id="hint"><h1>GTA 7: JS — Leonida 3D</h1>
     <p>Click to start. Carjack a ride, dodge the cops, run the streets.</p></div>
   <div id="wasted">WASTED</div>
@@ -97,7 +140,7 @@
     /* ----------------------------- Three setup ---------------------------- */
     var canvas = document.getElementById('c');
     var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 1.5 : 2));
     // Soft shadows + filmic color pipeline (r128 names). These three together are
     // the single biggest visual upgrade: grounded shadows, punchy sRGB color.
     renderer.shadowMap.enabled = true;
@@ -153,11 +196,16 @@
     scene.add(sky);
 
     function resize() {
-      var w = window.innerWidth, h = window.innerHeight;
+      // visualViewport is the post-URL-bar size on mobile; fall back to innerWidth/Height
+      var vv = window.visualViewport;
+      var w = Math.round(vv ? vv.width : window.innerWidth), h = Math.round(vv ? vv.height : window.innerHeight);
       renderer.setSize(w, h, false);
       camera.aspect = w / h; camera.updateProjectionMatrix();
     }
-    window.addEventListener('resize', resize); resize();
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+    resize();
 
     /* ----------------------------- Build world ---------------------------- */
     var maxAniso = renderer.capabilities.getMaxAnisotropy();
@@ -433,6 +481,94 @@
     document.addEventListener('mouseup', function (e) { if (e.button === 2) rmbDown = false; else mouseDown = false; });
     document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     window.addEventListener('blur', function () { keys = {}; mouseDown = false; rmbDown = false; });
+
+    /* ===================== MOBILE TOUCH CONTROLS =====================
+       Touch writes into the SAME closure vars the keyboard/mouse feed (keys{},
+       mouseDown, rmbDown, camYaw/camPitch, justX edges), so the engine + buildInput()
+       are untouched. Left half = floating move stick → WASD; right half = look-drag →
+       camYaw/camPitch; fixed buttons → actions. Multi-touch tracked by identifier. */
+    var IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    if (IS_TOUCH) {
+      document.body.classList.add('touch');
+      locked = true; // bypass pointer-lock (mobile won't grant it) so aim/shoot/reticle/started() work
+      var TUI = document.getElementById('touchUI');
+      var baseEl = document.getElementById('tStickBase'), knobEl = document.getElementById('tStickKnob');
+      var DEAD = 0.15, MOVE_THRESH = 0.32, RUN_THRESH = 0.9, LOOK_SENS_MUL = 2.4, LOOK_ENGAGE = 6;
+      var touchActive = {}, lastShopTap = 0;
+      function stickR() { var r = baseEl.getBoundingClientRect(); return (r.width || 140) * 0.5; }
+      function clearMoveKeys() { keys['KeyW'] = keys['KeyS'] = keys['KeyA'] = keys['KeyD'] = false; keys['ShiftLeft'] = false; }
+      function applyMove(t) {
+        var R = stickR(), dx = t.curX - t.baseX, dy = t.curY - t.baseY, m = Math.hypot(dx, dy);
+        var kx = t.baseX + (m > R ? dx / m * R : dx), ky = t.baseY + (m > R ? dy / m * R : dy);
+        knobEl.style.left = kx + 'px'; knobEl.style.top = ky + 'px';
+        var ox = 0, oy = 0;
+        if (m > DEAD * R) { var sc = ((Math.min(m, R) - DEAD * R) / (R - DEAD * R)) / m; ox = dx * sc; oy = dy * sc; }
+        clearMoveKeys();
+        if (oy < -MOVE_THRESH) keys['KeyW'] = true; else if (oy > MOVE_THRESH) keys['KeyS'] = true;
+        if (ox > MOVE_THRESH) keys['KeyD'] = true; else if (ox < -MOVE_THRESH) keys['KeyA'] = true;
+        if (Math.hypot(ox, oy) > RUN_THRESH) keys['ShiftLeft'] = true;
+      }
+      function applyLook(t, x, y) {
+        var dx = x - t.lastX, dy = y - t.lastY;
+        if (!t.engaged) { if (Math.hypot(dx, dy) < LOOK_ENGAGE) return; t.engaged = true; }
+        t.lastX = x; t.lastY = y;
+        var s = ((rmbDown && !W.player.inCar) ? AIM_SENS : MOUSE_SENS) * LOOK_SENS_MUL;
+        camYaw -= dx * s; camPitch -= dy * s; camPitch = Math.max(-0.35, Math.min(1.1, camPitch));
+      }
+      function pressBtn(act, el) {
+        if (el) el.classList.add('held');
+        if (act === 'fire') mouseDown = true;
+        else if (act === 'aim') rmbDown = true;
+        else if (act === 'jump') { keys['Space'] = true; justSpace = true; }
+        else if (act === 'enter') justF = true;
+        else if (act === 'rob') justE = true;
+        else if (act === 'job') justJ = true;
+        else if (act === 'wep') justQ = true;
+        else if (act === 'shop') { var now = (W.time * 1000); if (now - lastShopTap < 380) justN = true; else justB = true; lastShopTap = now; }
+      }
+      function releaseBtn(act, el) {
+        if (el) el.classList.remove('held');
+        if (act === 'fire') mouseDown = false; else if (act === 'aim') rmbDown = false; else if (act === 'jump') keys['Space'] = false;
+      }
+      function hitButton(x, y) { var el = document.elementFromPoint(x, y); while (el && el !== TUI) { if (el.dataset && el.dataset.act) return el; el = el.parentElement; } return null; }
+      function onStart(ev) {
+        for (var i = 0; i < ev.changedTouches.length; i++) {
+          var tc = ev.changedTouches[i], x = tc.clientX, y = tc.clientY, btn = hitButton(x, y);
+          if (btn) { touchActive[tc.identifier] = { role: 'button', act: btn.dataset.act, el: btn }; pressBtn(btn.dataset.act, btn); continue; }
+          if (x < window.innerWidth * 0.5) {
+            var e = { role: 'move', baseX: x, baseY: y, curX: x, curY: y }; touchActive[tc.identifier] = e;
+            baseEl.style.left = x + 'px'; baseEl.style.top = y + 'px'; baseEl.style.display = 'block';
+            knobEl.style.display = 'block'; applyMove(e);
+          } else { touchActive[tc.identifier] = { role: 'look', lastX: x, lastY: y, engaged: false }; }
+        }
+        ev.preventDefault();
+      }
+      function onMove(ev) {
+        for (var i = 0; i < ev.changedTouches.length; i++) {
+          var tc = ev.changedTouches[i], t = touchActive[tc.identifier]; if (!t) continue;
+          if (t.role === 'move') { t.curX = tc.clientX; t.curY = tc.clientY; applyMove(t); }
+          else if (t.role === 'look') applyLook(t, tc.clientX, tc.clientY);
+        }
+        ev.preventDefault();
+      }
+      function onEnd(ev) {
+        for (var i = 0; i < ev.changedTouches.length; i++) {
+          var tc = ev.changedTouches[i], t = touchActive[tc.identifier]; if (!t) continue;
+          if (t.role === 'move') { clearMoveKeys(); baseEl.style.display = 'none'; knobEl.style.display = 'none'; }
+          else if (t.role === 'button') releaseBtn(t.act, t.el);
+          delete touchActive[tc.identifier];
+        }
+        ev.preventDefault();
+      }
+      TUI.addEventListener('touchstart', onStart, { passive: false });
+      TUI.addEventListener('touchmove', onMove, { passive: false });
+      TUI.addEventListener('touchend', onEnd, { passive: false });
+      TUI.addEventListener('touchcancel', onEnd, { passive: false });
+    }
+    /* =================== END MOBILE TOUCH CONTROLS =================== */
+
+    // test probe: lets the mobile harness read the real input state touch handlers set
+    window.__probe = function () { return { keys: keys, mouseDown: mouseDown, rmbDown: rmbDown, camYaw: camYaw, justF: justF, justE: justE }; };
 
     var hintEl = document.getElementById('hint');
     function started() { return locked || W.time > 0.5; }

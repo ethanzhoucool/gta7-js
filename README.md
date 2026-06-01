@@ -8,6 +8,8 @@ A little GTA-style open-world game I built in plain JavaScript — no engine, no
 
 Open `index.html` in a browser. The 3D version streams Three.js from a CDN, so it needs internet the first time. The 2D version is fully offline.
 
+**On a phone?** The 3D version auto-detects touch and shows on-screen controls — a floating left stick to move/drive, drag the right side to look, and buttons for everything else. Same game, just thumbs.
+
 ## Controls (3D)
 
 - **WASD** drive/move · **Shift** run · **Space** jump (or handbrake in a car)
