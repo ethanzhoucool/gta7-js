@@ -139,11 +139,14 @@
 
     /* ----------------------------- Three setup ---------------------------- */
     var canvas = document.getElementById('c');
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+    // ?lowgl=1 forces the low-capability path (no shadows / no custom sky shader) for
+    // diagnosing & supporting weaker mobile GPUs that render the full pipeline black.
+    var LOWGL = /[?&]lowgl=1/.test(location.search);
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: !LOWGL });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 1.5 : 2));
     // Soft shadows + filmic color pipeline (r128 names). These three together are
     // the single biggest visual upgrade: grounded shadows, punchy sRGB color.
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = !LOWGL;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputEncoding = THREE.sRGBEncoding;          // r128: NOT outputColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -181,16 +184,24 @@
     scene.add(sun.target);
 
     // Gradient sky dome (kept centered on the camera) — replaces the flat background.
-    var skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: {
-        topColor: { value: new THREE.Color(0x2d6fc4) },
-        bottomColor: { value: new THREE.Color(SKY) },
-        offset: { value: 60 }, exponent: { value: 0.65 }
-      },
-      vertexShader: 'varying vec3 vP; void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vP = wp.xyz; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-      fragmentShader: 'uniform vec3 topColor; uniform vec3 bottomColor; uniform float offset; uniform float exponent; varying vec3 vP; void main(){ float h = normalize(vP + vec3(0.0, offset, 0.0)).y; gl_FragColor = vec4(mix(bottomColor, topColor, pow(max(h,0.0), exponent)), 1.0); }'
-    });
+    // Custom gradient sky shader — but on the LOWGL path use a plain Basic-material dome
+    // (some mobile GPUs render the custom ShaderMaterial black). applyTimeOfDay() writes
+    // either the shader uniforms or this material's .color, whichever exists.
+    var skyMat, skyIsShader = !LOWGL;
+    if (skyIsShader) {
+      skyMat = new THREE.ShaderMaterial({
+        side: THREE.BackSide, depthWrite: false, fog: false,
+        uniforms: {
+          topColor: { value: new THREE.Color(0x2d6fc4) },
+          bottomColor: { value: new THREE.Color(SKY) },
+          offset: { value: 60 }, exponent: { value: 0.65 }
+        },
+        vertexShader: 'varying vec3 vP; void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vP = wp.xyz; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+        fragmentShader: 'uniform vec3 topColor; uniform vec3 bottomColor; uniform float offset; uniform float exponent; varying vec3 vP; void main(){ float h = normalize(vP + vec3(0.0, offset, 0.0)).y; gl_FragColor = vec4(mix(bottomColor, topColor, pow(max(h,0.0), exponent)), 1.0); }'
+      });
+    } else {
+      skyMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthWrite: false, fog: false, color: new THREE.Color(SKY) });
+    }
     var sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 15), skyMat);
     sky.frustumCulled = false;
     scene.add(sky);
@@ -898,8 +909,8 @@
         sun.intensity *= (1 - wet * 0.55); hemi.intensity *= (1 - wet * 0.3);
         var g = 0.45; _skyTop.lerp(_grey(_skyTop, g), wet); _skyBot.lerp(_grey(_skyBot, g), wet);
       }
-      skyMat.uniforms.topColor.value.copy(_skyTop);
-      skyMat.uniforms.bottomColor.value.copy(_skyBot);
+      if (skyIsShader) { skyMat.uniforms.topColor.value.copy(_skyTop); skyMat.uniforms.bottomColor.value.copy(_skyBot); }
+      else { skyMat.color.copy(_skyBot); }
       _fogCol.copy(_skyBot); scene.fog.color.copy(_fogCol); scene.background.copy(_skyBot);
       scene.fog.near = 150 - wet * 90; scene.fog.far = 440 - wet * 200; // denser haze in the wet
       // windows glow as it gets dark
