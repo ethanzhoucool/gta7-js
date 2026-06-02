@@ -67,7 +67,8 @@
   // Vehicle damage (the player's car has its own HP, separate from the player).
   var PCAR_HP = 200;          // player car starts here; takes ram/crash/bullet damage
   // Helicopter (4★+): hovers above the player and fires down; killable.
-  var HELI_HP = 220, HELI_ALT = 24, HELI_SPEED = 30, HELI_FIRE_RANGE = 60, HELI_FIRE_CD = 0.55, HELI_DMG = 7;
+  var HELI_HP = 170, HELI_ALT = 24, HELI_SPEED = 30, HELI_FIRE_RANGE = 60, HELI_FIRE_CD = 0.55, HELI_DMG = 7;
+  var HELI_HIT_R = 4.5; // 3D bullet hitbox radius — you must genuinely aim UP at the chopper, but tracking it is rewarded
 
   var WANTED_MAX = 5, WITNESS_RANGE = 42, REPORT_DELAY = 3.0, DISGUISE_CD = 6.0;
   // Per-star seconds cops keep searching (while unseen) before dropping one star. Higher
@@ -1044,18 +1045,22 @@
       var wd = currentWeaponDef();
       W.fireCd = wd.cd * (p.fireRateMul || 1);        // per-weapon cooldown × upgrade
       var yaw = (input.aimYaw !== undefined) ? input.aimYaw : p.yaw;
+      // vertical aim: up = positive pitch. Renderer solves this from the crosshair ray;
+      // headless/AI callers omit it (default flat). Clamped so you can fire near-straight up.
+      var pitch = (input.aimPitch !== undefined) ? clamp(input.aimPitch, -1.35, 1.35) : 0;
+      var cp = Math.cos(pitch), sp = Math.sin(pitch);
       var oy = 1.1; // torso / car-body height — matches the y-band hit tests below
       var ox = p.x, oz = p.z;
       var dmg = wd.dmg * (p.gunDmgMul || 1);
       // single-pellet weapons fire dead-center (exact yaw); shotgun sprays pellets
       for (var s = 0; s < wd.pellets; s++) {
         var j = (wd.pellets === 1) ? 0 : rand(-wd.spread, wd.spread);
-        var a = yaw + j, dx = Math.sin(a), dz = Math.cos(a);
-        var b = makeBullet(ox + dx * 2, oy, oz + dz * 2, dx, 0, dz, 'player', dmg);
+        var a = yaw + j, dx = Math.sin(a) * cp, dz = Math.cos(a) * cp, dy = sp;
+        var b = makeBullet(ox + dx * 2, oy + dy * 2, oz + dz * 2, dx, dy, dz, 'player', dmg);
         b.life = BULLET_LIFE * wd.range;              // range tuning per weapon
         W.bullets.push(b);
       }
-      fx('muzzle', ox + Math.sin(yaw) * 2, oy, oz + Math.cos(yaw) * 2);
+      fx('muzzle', ox + Math.sin(yaw) * cp * 2, oy + sp * 2, oz + Math.cos(yaw) * cp * 2);
       for (var i = 0; i < W.peds.length; i++) { var q = W.peds[i]; if (q.alive && d2(q.x, q.z, p.x, p.z) < 40 * 40) { if (q.tough && Math.random() < 0.4) q.hostile = true; else q.panic = 3; } }
       commitCrime(CRIME.PETTY, p.x, p.z); // firing in the open is petty; a kill upgrades it via killPed
     }
@@ -1067,8 +1072,10 @@
         if (!dead && b.team === 'player') {
           for (var j = 0; j < W.peds.length && !dead; j++) { var p = W.peds[j]; if (p.alive && d2(b.x, b.z, p.x, p.z) < 1.4 * 1.4 && b.y < 2.2) { p.hp -= (b.dmg || BULLET_DMG); if (p.tough) p.hostile = true; else p.panic = 3; fx('blood', b.x, b.y, b.z); if (p.hp <= 0) killPed(p, true); dead = true; } }
           for (var k = 0; k < W.police.length && !dead; k++) { var c = W.police[k]; if (d2(b.x, b.z, c.x, c.z) < 2.8 * 2.8 && b.y < 2.6) { c.hp -= (b.dmg || BULLET_DMG); fx('spark', b.x, b.y, b.z); if (c.hp <= 0) fx('explode', c.x, 1, c.z); dead = true; } }
-          // helis hover overhead; flat bullets "shoot up" — hit on horizontal proximity
-          for (var hh = 0; hh < W.helis.length && !dead; hh++) { var H = W.helis[hh]; if (d2(b.x, b.z, H.x, H.z) < 4 * 4) { H.hp -= (b.dmg || BULLET_DMG); fx('spark', b.x, b.y, b.z); dead = true; } }
+          // helis hover at altitude — a REAL 3D hit test, so you must actually aim up at them
+          for (var hh = 0; hh < W.helis.length && !dead; hh++) { var H = W.helis[hh];
+            var hdx = b.x - H.x, hdy = b.y - H.y, hdz = b.z - H.z;
+            if (hdx * hdx + hdy * hdy + hdz * hdz < HELI_HIT_R * HELI_HIT_R) { H.hp -= (b.dmg || BULLET_DMG); H.hitFlash = 0.12; fx('spark', b.x, b.y, b.z); dead = true; } }
           // any traffic/parked car is shootable now: damage its carHp, ignite at 0 (GTA-style)
           for (var cc = 0; cc < W.cars.length && !dead; cc++) { var ac = W.cars[cc]; if (ac.onFire || ac.exploded) continue;
             if (d2(b.x, b.z, ac.x, ac.z) < 2.8 * 2.8 && b.y < 2.6) {
@@ -1183,7 +1190,7 @@
       // spawn off to the side, high up; descends to a circling standoff around the player
       var ang = rand(0, TWO_PI), R = 90;
       return { x: clamp(W.player.x + Math.cos(ang) * R, 4, WORLD - 4), z: clamp(W.player.z + Math.sin(ang) * R, 4, WORLD - 4),
-        y: HELI_ALT + 14, yaw: 0, rotor: 0, hp: HELI_HP, fireCd: rand(0.5, 1.2), orbit: ang, id: (W._id = (W._id || 0) + 1) };
+        y: HELI_ALT + 14, yaw: 0, rotor: 0, hp: HELI_HP, maxHp: HELI_HP, hitFlash: 0, fireCd: rand(0.5, 1.2), orbit: ang, id: (W._id = (W._id || 0) + 1) };
     }
     function updateHeli(h, dt) {
       var pl = W.player;
@@ -1195,6 +1202,7 @@
       h.y = lerp(h.y, ty, 1 - Math.exp(-1.5 * dt));
       h.yaw = Math.atan2(pl.x - h.x, pl.z - h.z);
       h.rotor += dt * 30;
+      if (h.hitFlash > 0) h.hitFlash = Math.max(0, h.hitFlash - dt);
       var d = dist(h.x, h.z, pl.x, pl.z);
       h.fireCd -= dt;
       if (d < HELI_FIRE_RANGE && h.fireCd <= 0 && Math.abs(h.y - HELI_ALT) < 6) {

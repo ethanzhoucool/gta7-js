@@ -654,26 +654,37 @@
     var aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -SHOOT_Y);
     var _planeHit = new THREE.Vector3(), _hitPoint = new THREE.Vector3();
     var _aimList = [];                                  // reused each frame (no per-frame GC)
-    var solvedAimYaw = 0;
+    var solvedAimYaw = 0, solvedAimPitch = 0;
     function aimTargets() {
       _aimList.length = 0;
       var i;
       for (i = 0; i < W.peds.length; i++) if (pedPool[i] && pedPool[i].visible && W.peds[i].alive) _aimList.push(pedPool[i]);
       for (i = 0; i < W.police.length; i++) if (policePool[i] && policePool[i].visible) _aimList.push(policePool[i]);
       for (i = 0; i < W.cars.length; i++) if (carPool[i] && carPool[i].visible) _aimList.push(carPool[i]);
+      for (i = 0; i < W.helis.length; i++) if (heliPool[i] && heliPool[i].visible) _aimList.push(heliPool[i]); // lock the crosshair onto choppers overhead
       return _aimList;
     }
-    function solveAimYaw() {
+    // Solve BOTH the firing yaw and pitch from the crosshair ray. Yaw/pitch are measured
+    // FROM THE PLAYER (matches the engine muzzle base) to the world point under the
+    // reticle — a ground target gives ~flat pitch, a chopper overhead gives a steep up-angle.
+    function solveAim() {
       var p = W.player;
       aimRay.setFromCamera(SCREEN_CENTER, camera);
       var hits = aimRay.intersectObjects(aimTargets(), true);
       var have = false;
       if (hits.length) { _hitPoint.copy(hits[0].point); have = true; }
       if (!have && aimRay.ray.intersectPlane(aimPlane, _planeHit)) { _hitPoint.copy(_planeHit); have = true; }
-      if (!have) return solvedAimYaw;
-      var dx = _hitPoint.x - p.x, dz = _hitPoint.z - p.z; // from player center (matches engine muzzle base)
-      if (dx * dx + dz * dz > 1e-4) solvedAimYaw = Math.atan2(dx, dz);
-      return solvedAimYaw;
+      if (have) {
+        var dx = _hitPoint.x - p.x, dz = _hitPoint.z - p.z, horiz = Math.hypot(dx, dz);
+        if (horiz > 1e-2) solvedAimYaw = Math.atan2(dx, dz);
+        solvedAimPitch = Math.atan2(_hitPoint.y - SHOOT_Y, Math.max(horiz, 1e-3)); // up = positive
+      } else {
+        // no target and the ray is above the ground plane (looking at open sky / straight
+        // up): follow the camera's own look direction so firing up still goes where you look
+        var d = aimRay.ray.direction, h = Math.hypot(d.x, d.z);
+        if (h > 1e-4) solvedAimYaw = Math.atan2(d.x, d.z);
+        solvedAimPitch = Math.atan2(d.y, Math.max(h, 1e-4));
+      }
     }
 
     /* ----------------------------- Sync meshes ---------------------------- */
@@ -935,7 +946,7 @@
         aim: rmbDown && locked && !inCar,          // right-mouse to aim down sights
         camYaw: inCar && W.playerCar ? W.playerCar.yaw : camYaw,           // VISUAL look yaw
         aimYaw: inCar && W.playerCar ? W.playerCar.yaw : solvedAimYaw,     // FIRING yaw -> reticle target
-        aimPitch: 0,                                                       // flat bullets (engine clamps anyway)
+        aimPitch: inCar ? 0 : solvedAimPitch,                              // FIRING pitch (up = +); flat while driving
         shoot: mouseDown && locked
       };
       if (withEdges) { inp.enterPressed = justF; inp.robPressed = justE; inp.jumpPressed = !inCar && justSpace; inp.buyPressed = justB; inp.cyclePressed = justN; inp.safehousePressed = justH;
@@ -950,7 +961,7 @@
       var dt = (ts - last) / 1000; last = ts;
       if (dt > 0.25) dt = 0.25;
       acc += dt;
-      if (!W.player.inCar) solveAimYaw();   // refresh the camera-accurate firing yaw once per frame
+      if (!W.player.inCar) solveAim();   // refresh the camera-accurate firing yaw + pitch once per frame
       var first = true, guard = 0;
       while (acc >= STEP && guard < 6) { eng.step(STEP, buildInput(first)); acc -= STEP; first = false; guard++; }
       if (acc > STEP) acc = 0;

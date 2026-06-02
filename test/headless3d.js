@@ -239,15 +239,22 @@ function run() {
     CW.player.inCar = false; CW.playerCar = null;
     var px = 200, pz = 200; CW.player.x = px; CW.player.z = pz;
 
-    // bullets must fly FLAT even with the camera looking down — not bury in the road
+    // default/hip fire is FLAT — no aimPitch passed (matches the renderer, which resolves
+    // ground aim to the SHOOT_Y plane → pitch ~0). A flat tracer must not dive into the road.
     CW.bullets.length = 0;
-    ce.step(STEP, { shoot: true, aimYaw: 0, aimPitch: -0.25 });
+    ce.step(STEP, { shoot: true, aimYaw: 0 });
     assert.ok(CW.bullets.length > 0, 'shooting should spawn a bullet');
     for (var t = 0; t < 18; t++) ce.step(STEP, {}); // ~0.3s of travel (~36u)
     var live = CW.bullets.filter(function (b) { return b.team === 'player'; });
-    // a flat tracer must still be alive AND at its launch height after the flight
     assert.ok(live.length > 0, 'a flat bullet should survive a 0.3s flight, not dive into the road');
-    assert.ok(Math.abs(live[0].y - 1.1) < 0.01, 'bullet should stay at body height (y=' + live[0].y.toFixed(2) + ')');
+    assert.ok(Math.abs(live[0].y - 1.1) < 0.01, 'flat fire keeps the tracer at body height (y=' + live[0].y.toFixed(2) + ')');
+
+    // vertical aim (new): a pitched-UP shot must actually gain altitude, so you can hit a chopper
+    CW.bullets.length = 0; CW.fireCd = 0;
+    ce.step(STEP, { shoot: true, aimYaw: 0, aimPitch: 0.6 });
+    for (var tu = 0; tu < 10; tu++) ce.step(STEP, {});
+    var up = CW.bullets.filter(function (b) { return b.team === 'player'; });
+    assert.ok(up.length > 0 && up[0].y > 3, 'an upward-pitched shot should climb (y=' + (up[0] ? up[0].y.toFixed(2) : 'none') + ')');
 
     // flat fire damages a police car at range. (We assert HP drops, not destruction:
     // a spotted cruiser may instead deploy its officer and bail — both are valid
@@ -479,6 +486,26 @@ function run() {
     assert.ok(spawned, 'a helicopter should spawn at 4 stars');
     var heli = HW.helis[0]; var hHp = heli.hp; heli.hp = 0; he.step(STEP, {});
     assert.ok(HW.helis.indexOf(heli) < 0, 'a destroyed heli is removed');
+
+    // shoot a chopper DOWN with real VERTICAL aim. A flat shot must miss it (the old
+    // horizontal-proximity hack is gone); a pitched-up burst must actually take it down.
+    (function heliVerticalKill() {
+      var ax = 200, az = 200, hz = 234, hy = 24;          // chopper 34u north, at HELI_ALT
+      var yaw = Math.atan2(0, hz - az);                   // 0 → faces +z toward the heli
+      var pitchUp = Math.atan2(hy - 1.1, hz - az);        // ~0.59 rad: aim straight at it
+      function allRoad(EX, WX) { for (var z = 0; z < EX.constants.MAP; z++) for (var x = 0; x < EX.constants.MAP; x++) WX.grid[z][x] = EX.constants.T_ROAD; for (var pi = 0; pi < WX.peds.length; pi++) WX.peds[pi].alive = false; }
+      function spawnHeli(WX, EX) { for (var i = 0; i < 600 && WX.helis.length === 0; i++) { WX.player.x = ax; WX.player.z = az; WX.player.inCar = false; WX.wanted = 4; WX.lkpValid = true; WX.lkpX = ax; WX.lkpZ = az; EX.step(STEP, {}); } return WX.helis[0]; }
+      // (a) FLAT fire passes ~23u under the chopper and must do ZERO damage
+      var fe = GTA3D.createEngine(), FW = fe.world; allRoad(fe, FW); FW.player.weapon = 'smg'; FW.player.weapons.smg = true; FW.player.ammo = 999999;
+      var fh = spawnHeli(FW, fe); var fhp = fh.hp;
+      for (var i = 0; i < 50; i++) { FW.player.x = ax; FW.player.z = az; if (FW.helis[0]) { FW.helis[0].x = ax; FW.helis[0].z = hz; FW.helis[0].y = hy; } FW.fireCd = 0; fe.step(STEP, { shoot: true, aimYaw: yaw, aimPitch: 0 }); }
+      assert.ok(FW.helis.length > 0 && FW.helis[0].hp === fhp, 'flat fire must NOT damage an overhead chopper (hp ' + fhp + ' → ' + (FW.helis[0] ? FW.helis[0].hp : 'gone') + ')');
+      // (b) pitched-UP fire converges on it and downs it within a sustained burst
+      var ue = GTA3D.createEngine(), UW = ue.world; allRoad(ue, UW); UW.player.weapon = 'smg'; UW.player.weapons.smg = true; UW.player.ammo = 999999;
+      spawnHeli(UW, ue); var downed = false;
+      for (var j = 0; j < 220 && !downed; j++) { UW.player.x = ax; UW.player.z = az; if (UW.helis[0]) { UW.helis[0].x = ax; UW.helis[0].z = hz; UW.helis[0].y = hy; } UW.fireCd = 0; ue.step(STEP, { shoot: true, aimYaw: yaw, aimPitch: pitchUp }); if (UW.helis.length === 0) downed = true; }
+      assert.ok(downed, 'a sustained pitched-up SMG burst should down the chopper');
+    })();
 
     // SWAT: at 5★ a deployed officer is SWAT (tougher)
     var we = GTA3D.createEngine(), SW = we.world;
