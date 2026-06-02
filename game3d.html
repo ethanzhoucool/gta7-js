@@ -417,12 +417,14 @@
     // Walk-in interiors: an enclosed room (its own walls occlude the city) built at the shop's
     // spot when W.interior is set. cityHideable is toggled so the outside world doesn't show.
     var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, storefrontGroup];
-    var interiorGroup = null, interiorActive = false;
+    var interiorGroup = null, interiorActive = false, interiorBuiltType = null;
     function clearGroup(g) { for (var i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); }
     function showInterior(it) {
       if (!interiorGroup) { interiorGroup = new THREE.Group(); scene.add(interiorGroup); }
-      clearGroup(interiorGroup); buildInteriorRoom(interiorGroup, it.type);
+      // rebuild props only when the shop TYPE changes (≤4 builds ever) — not every entry
+      if (interiorBuiltType !== it.type) { clearGroup(interiorGroup); buildInteriorRoom(interiorGroup, it.type); interiorBuiltType = it.type; }
       interiorGroup.position.set(it.baseX, 0, it.baseZ); interiorGroup.visible = true;
+      camPitch = -0.05; // level the view on entry (don't keep an upward chopper-aim pitch indoors)
       for (var i = 0; i < cityHideable.length; i++) if (cityHideable[i]) cityHideable[i].visible = false;
       interiorActive = true;
     }

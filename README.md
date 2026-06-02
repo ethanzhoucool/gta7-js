@@ -13,15 +13,15 @@ Open `index.html` in a browser. The 3D version streams Three.js from a CDN, so i
 ## Controls (3D)
 
 - **WASD** drive/move · **Shift** run · **Space** jump (or handbrake in a car)
-- **Mouse** look · **right-click** aim · **click** shoot
-- **F** enter car / carjack · **E** rob (store or person) · **B** shop / **N** next item
-- **H** lie low at your apartment · **J** courier job · **1-4** / **Q** switch weapon
+- **Mouse** look (look up to aim at choppers) · **right-click** aim · **click** shoot
+- **F** enter/steal a car, hijack a cop car, or walk into a shop (and back out) · **E** rob (store or person)
+- **B** buy / **N** next item · **H** lie low at your apartment · **J** courier job · **1-4** / **Q** switch weapon
 
 ## What you can do
 
-Steal cars, shoot it out with cops (they get out and fight on foot, choppers show up at 4 stars — aim up and shoot them down — SWAT at 5), and build an empire: rob stores, run courier jobs (chain deliveries for big combos), hunt bounties, take over gang turf, then spend it all on weapons, faster cars, body armor, and apartments that pay you rent. There's a full day/night cycle and weather too.
+Steal cars (including cop cars — yank the officer right out), shoot it out with the police (they get out and fight on foot, choppers show up at 4 stars — aim up and shoot them down — SWAT at 5), and build an empire: rob stores, run courier jobs (chain deliveries for big combos), hunt bounties, take over gang turf, then spend it all on weapons, faster cars, body armor, and apartments that pay you rent. You can walk *into* the shops — the gun shop is a proper gun shop inside. There's a full day/night cycle and weather too.
 
-It's set in a big San Francisco-ish city — bay on three sides, an orange bridge, a downtown highrise cluster, and pastel row-houses everywhere else.
+It's set in a big San Francisco-ish city — a bay, the Golden Gate bridge you can actually drive across to a second landmass, a downtown highrise cluster, pastel row-houses, and sidewalks lining the streets.
 
 Wanted system works like GTA, but heat scales with the crime: a mugging is one star, a shootout climbs fast, and the cops keep searching longer the hotter you are. Crimes only count if someone sees them, and you shake the cops by breaking line of sight or switching cars. Loops escalate the more you chain them, with permanent unlocks for sticking with one.
 
