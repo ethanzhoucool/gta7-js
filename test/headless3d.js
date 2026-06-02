@@ -397,7 +397,9 @@ function run() {
     var se = GTA3D.createEngine(), SW = se.world, SIN = se._internal;
     for (var si = 1; si < SW.stores.length; si++) { SW.stores[si].x = 5; SW.stores[si].z = 5; }
     SW.player.inCar = false; SW.player.x = SW.stores[0].x; SW.player.z = SW.stores[0].z; SW.money = 0; SW.wanted = 0;
-    assert.ok(SIN.robStore() === true && SW.money > 0 && SW.wanted >= 2, 'store robbery pays + raises heat');
+    // a COLD armed robbery floors to exactly 2★ (not 3 — alertPolice + commitCrime must not double-count)
+    assert.ok(SIN.robStore() === true && SW.money > 0, 'store robbery pays');
+    assert.strictEqual(SW.wanted, 2, 'a cold armed robbery is exactly 2★ (got ' + SW.wanted + ')');
     assert.ok(SIN.robStore() === false, 'store on cooldown after a robbery');
     function recompAssert(e) { assert.ok(e.world.netWorth >= e.world.money, 'net worth includes assets'); }
   })();

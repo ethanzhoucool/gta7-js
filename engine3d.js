@@ -402,10 +402,13 @@
       for (var i = 0; i < W.stores.length; i++) { var s = W.stores[i];
         if (s.cooldown <= 0 && d2(s.x, s.z, W.player.x, W.player.z) < 6 * 6) {
           var take = randInt(120, 320); W.money += take; popCash(take); s.cooldown = 45;
-          alertPolice(CRIME.ASSAULT, s.x, s.z); // armed robbery floors heat to 2★ from cold
-          commitCrime(CRIME.ASSAULT, s.x, s.z); // repeat robberies while hot climb past 2
+          // mutually exclusive (same idiom as explodeCar): a COLD robbery floors to 2★;
+          // robbing again while already hot ratchets via commitCrime. Calling both would
+          // double-count (alertPolice→2 then commitCrime's +1 bump→3) on a cold start.
+          if (W.wanted >= 1) commitCrime(CRIME.ASSAULT, s.x, s.z);
+          else alertPolice(CRIME.ASSAULT, s.x, s.z);
           post('@you', '💰 Robbed a store for $' + take + '!');
-          post('@LeonidaPD', 'Armed robbery in progress. (2★)');
+          post('@LeonidaPD', 'Armed robbery in progress. (' + W.wanted + '★)');
           return true;
         }
       }
