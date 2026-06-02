@@ -19,9 +19,11 @@ Open `index.html` in a browser. The 3D version streams Three.js from a CDN, so i
 
 ## What you can do
 
-Steal cars, shoot it out with cops (they get out and fight on foot, choppers show up at 4 stars, SWAT at 5), and build an empire: rob stores, run courier jobs (chain deliveries for big combos), hunt bounties, take over gang turf, then spend it all on weapons, faster cars, body armor, and apartments that pay you rent. There's a full day/night cycle and weather too.
+Steal cars, shoot it out with cops (they get out and fight on foot, choppers show up at 4 stars — aim up and shoot them down — SWAT at 5), and build an empire: rob stores, run courier jobs (chain deliveries for big combos), hunt bounties, take over gang turf, then spend it all on weapons, faster cars, body armor, and apartments that pay you rent. There's a full day/night cycle and weather too.
 
-Wanted system works like GTA — crimes only count if someone sees them, and you shake the cops by breaking line of sight or switching cars. Loops escalate the more you chain them, with permanent unlocks for sticking with one.
+It's set in a big San Francisco-ish city — bay on three sides, an orange bridge, a downtown highrise cluster, and pastel row-houses everywhere else.
+
+Wanted system works like GTA, but heat scales with the crime: a mugging is one star, a shootout climbs fast, and the cops keep searching longer the hotter you are. Crimes only count if someone sees them, and you shake the cops by breaking line of sight or switching cars. Loops escalate the more you chain them, with permanent unlocks for sticking with one.
 
 ## Dev
 

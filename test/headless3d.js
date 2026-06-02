@@ -518,6 +518,44 @@ function run() {
     assert.ok(swat.length > 0 && swat[0].hp >= 100, 'a 5-star deploy produces a tougher SWAT officer');
   })();
 
+  // 9k) SF map: bigger world, bay on three edges, water-tight grid, land-only spawns,
+  //     downtown highrise zoning vs residential low-rise, scaled population.
+  (function mapChecks() {
+    var me = GTA3D.createEngine(), MW = me.world, C = me.constants;
+    assert.strictEqual(C.MAP, 64, 'MAP scaled to 64');
+    assert.strictEqual(C.WORLD, 896, 'WORLD = 896');
+    assert.strictEqual(C.T_WATER, 3, 'T_WATER exported');
+    assert.strictEqual(C.WATER_MARGIN, 5, 'WATER_MARGIN exported');
+    assert.ok(C.DOWNTOWN && C.DOWNTOWN.x0 === 42 && C.DOWNTOWN.x1 === 56, 'DOWNTOWN box exported');
+    // water-tight: every watered-edge tile is water, and NO road is carved into the bay
+    var WM = C.WATER_MARGIN, badEdge = 0, roadInWater = 0;
+    for (var z = 0; z < C.MAP; z++) for (var x = 0; x < C.MAP; x++) {
+      var inBand = (z < WM || x < WM || x >= C.MAP - WM);
+      if (inBand && MW.grid[z][x] !== C.T_WATER) badEdge++;
+      if (inBand && MW.grid[z][x] === C.T_ROAD) roadInWater++;
+    }
+    assert.strictEqual(badEdge, 0, 'every watered-edge tile is water');
+    assert.strictEqual(roadInWater, 0, 'no road carved into the bay (no pier drive-off)');
+    function tileAt(x, z) { var tx = Math.floor(x / C.TILE), tz = Math.floor(z / C.TILE); return MW.grid[tz] ? MW.grid[tz][tx] : C.T_WATER; }
+    assert.ok(tileAt(MW.player.x, MW.player.z) !== C.T_WATER, 'player spawns on land, not the bay');
+    function allDry(arr, label) { for (var i = 0; i < arr.length; i++) assert.ok(tileAt(arr[i].x, arr[i].z) !== C.T_WATER, label + ' ' + i + ' must be on land'); }
+    allDry(MW.peds, 'ped'); allDry(MW.cars, 'car'); allDry(MW.pickups, 'pickup'); allDry(MW.stores, 'store');
+    allDry(MW.shops, 'shop'); allDry(MW.propPos, 'property'); allDry(MW.jobDepots, 'depot'); allDry(MW.zones, 'zone');
+    function allRoad(arr, label) { for (var i = 0; i < arr.length; i++) assert.strictEqual(tileAt(arr[i].x, arr[i].z), C.T_ROAD, label + ' ' + i + ' must snap to a road'); }
+    allRoad(MW.shops, 'shop'); allRoad(MW.jobDepots, 'depot'); allRoad(MW.propPos, 'property'); allRoad(MW.zones, 'zone');
+    // downtown zoning: hero towers set; downtown tiles are tall, residential tiles are low
+    assert.ok(MW.buildingHeights[14][50] === 52 && MW.buildingHeights[12][46] === 46, 'hero towers set');
+    assert.ok(MW.buildingHeights[10][48] >= 22, 'downtown tiles are highrise');   // inside DOWNTOWN
+    assert.ok(MW.buildingHeights[55][10] <= 9, 'residential tiles are low-rise');  // SW, outside
+    // population scaled to fill the bigger map
+    var traffic = MW.cars.filter(function (c) { return c.driver === 'ai'; }).length;
+    assert.ok(MW.peds.length >= 60, 'ped population scaled (' + MW.peds.length + ')');
+    assert.strictEqual(traffic, 30, 'traffic scaled to 30 (got ' + traffic + ')');
+    assert.strictEqual(MW.stores.length, 7, '7 stores');
+    assert.strictEqual(MW.pickups.filter(function (p) { return p.type === 'cash'; }).length, 40, '40 cash pickups');
+    assert.strictEqual(MW.pickups.filter(function (p) { return p.type === 'health'; }).length, 10, '10 health pickups');
+  })();
+
   // 10) long soak with pseudo-random input (now also exercises economy inputs)
   var seed = 99991;
   function lcg() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }

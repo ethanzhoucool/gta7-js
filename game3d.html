@@ -136,6 +136,9 @@
     window.__ENG = eng; // test/debug hook: lets the headless browser harness drive the engine
     var W = eng.world, K = eng.constants, IN = eng._internal;
     var TILE = K.TILE, MAP = K.MAP, WORLD = K.WORLD;
+    var WATER_MARGIN = (K.WATER_MARGIN != null ? K.WATER_MARGIN : 5);  // bay margin (read from engine)
+    var DOWNTOWN = K.DOWNTOWN || null;                                 // highrise zoning box (engine-owned)
+    var PIER_COLS = K.PIER_COLS || [10, 16, 22, 28, 34, 40];           // Embarcadero pier columns
 
     /* ----------------------------- Three setup ---------------------------- */
     var canvas = document.getElementById('c');
@@ -156,9 +159,9 @@
     var scene = new THREE.Scene();
     var SKY = 0x9ec9e8;
     scene.background = new THREE.Color(SKY);
-    scene.fog = new THREE.Fog(SKY, 150, 440);              // fade before the 600u far plane
+    scene.fog = new THREE.Fog(SKY, 280, 820);              // widened for WORLD=896; fades before the 1100u far plane
 
-    var camera = new THREE.PerspectiveCamera(60, 1, 0.1, 600);
+    var camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1100);  // far plane raised for the bigger world
 
     // Sky/ground-tinted ambient instead of flat AmbientLight: tops go cool, undersides
     // pick up warm ground bounce — low-poly boxes read as "outdoors".
@@ -177,7 +180,7 @@
     var SUN_D = 150;
     sun.shadow.camera.left = -SUN_D; sun.shadow.camera.right = SUN_D;
     sun.shadow.camera.top = SUN_D; sun.shadow.camera.bottom = -SUN_D;
-    sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 600;
+    sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 1100;
     sun.shadow.camera.updateProjectionMatrix();
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.05; // kill acne on boxes
     scene.add(sun);
@@ -202,7 +205,7 @@
     } else {
       skyMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthWrite: false, fog: false, color: new THREE.Color(SKY) });
     }
-    var sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 15), skyMat);
+    var sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 15), skyMat);  // dome encloses the bigger world
     sky.frustumCulled = false;
     scene.add(sky);
 
@@ -256,18 +259,21 @@
     // ground
     var ground = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD, WORLD),
-      new THREE.MeshStandardMaterial({ color: 0x3d5a33, roughness: 0.95, metalness: 0.0 }));
+      new THREE.MeshStandardMaterial({ color: 0x6f7e4a, roughness: 0.95, metalness: 0.0 }));  // warmer SF hillside
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(WORLD / 2, 0, WORLD / 2);
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // count tiles by type
-    var nRoad = 0, nBuild = 0, nPark = 0, x, z;
+    // count tiles by type (TW guarded so an older engine without T_WATER still counts cleanly)
+    var TW = (K.T_WATER != null) ? K.T_WATER : -1;
+    var nRoad = 0, nBuild = 0, nPark = 0, nWater = 0, x, z;
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var t = W.grid[z][x];
-      if (t === K.T_ROAD) nRoad++; else if (t === K.T_BUILDING) nBuild++; else nPark++;
+      if (t === K.T_ROAD) nRoad++; else if (t === K.T_BUILDING) nBuild++;
+      else if (t === TW) nWater++; else nPark++;
     }
+    if (nWater === 0) nWater = 1;  // never allocate a 0-instance mesh
 
     var m4 = new THREE.Matrix4();
     // roads (asphalt + lane markings)
@@ -285,13 +291,23 @@
       new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.9, metalness: 0.0 }), nPark);
     var leaves = new THREE.InstancedMesh(new THREE.ConeGeometry(2.2, 4.5, 7),
       new THREE.MeshStandardMaterial({ color: 0x2f7a37, roughness: 0.85, metalness: 0.0 }), nPark);
+    // bay water — one InstancedMesh (one draw call). MeshStandardMaterial (not a shader) so ?lowgl renders it.
+    var water = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
+      new THREE.MeshStandardMaterial({ color: 0x2e6f8e, roughness: 0.25, metalness: 0.35, transparent: true, opacity: 0.92 }), nWater);
+    water.receiveShadow = true;
 
     var _bcol = new THREE.Color();
     function bhash(a, b) { var h = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return h - Math.floor(h); }
-    var ri = 0, pi = 0, bi = 0;
+    // SF palette: light "Painted Ladies" pastels for residential low-rise, cool glass for
+    // downtown towers. Values are kept BRIGHT because they multiply the facade texture.
+    var PASTEL = [0xEAD7C2, 0xD8E0C8, 0xCBD9E6, 0xEAD0D0, 0xE6D6B8, 0xD8CFE0, 0xCFE0DA, 0xF0E8DC];
+    var GLASS = [0x5C7A99, 0x4A7A82, 0x6E8FB0];
+    function inDowntown(xx, zz) { return DOWNTOWN && xx >= DOWNTOWN.x0 && xx < DOWNTOWN.x1 && zz >= DOWNTOWN.z0 && zz < DOWNTOWN.z1; }
+    var ri = 0, pi = 0, bi = 0, wi = 0;
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var cx = x * TILE + TILE / 2, cz = z * TILE + TILE / 2, tt = W.grid[z][x];
       if (tt === K.T_ROAD) { m4.makeTranslation(cx, 0.1, cz); roads.setMatrixAt(ri++, m4); }
+      else if (tt === TW) { m4.makeTranslation(cx, 0.05, cz); water.setMatrixAt(wi++, m4); }
       else if (tt === K.T_PARK) {
         m4.makeTranslation(cx, 0.12, cz); parks.setMatrixAt(pi, m4);
         m4.makeTranslation(cx, 1.2, cz); trunks.setMatrixAt(pi, m4);
@@ -301,22 +317,49 @@
         var hgt = W.buildingHeights[z][x];
         m4.makeScale(1, hgt, 1); m4.setPosition(cx, hgt / 2, cz);
         bldgs.setMatrixAt(bi, m4);
-        // per-instance concrete/sandstone/glass tint
-        var h1 = bhash(x, z), h2 = bhash(z + 3, x + 5);
-        var base = 0.80 + h1 * 0.20, warm = (h2 - 0.5) * 0.12;
-        _bcol.setRGB(base + warm, base, base - warm);
-        if (h2 > 0.88) _bcol.setRGB(0.62, 0.72, 0.86);
+        // SF tint: glass downtown, pastel everywhere else (deterministic, no two neighbours equal)
+        if (inDowntown(x, z)) _bcol.setHex(GLASS[(x * 7 + z * 13) % GLASS.length]);
+        else _bcol.setHex(PASTEL[(x * 3 + z * 5) % PASTEL.length]);
         bldgs.setColorAt(bi, _bcol);
         bi++;
       }
     }
     // frustumCulled=false: InstancedMesh derives its bounds from the base geometry
     // at the origin, so without this the whole city vanishes when you look away.
-    [roads, parks, bldgs, trunks, leaves].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
+    [roads, parks, bldgs, trunks, leaves, water].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
     if (bldgs.instanceColor) bldgs.instanceColor.needsUpdate = true;
     roads.receiveShadow = true; parks.receiveShadow = true;
     bldgs.castShadow = true; bldgs.receiveShadow = true;
     trunks.castShadow = true; leaves.castShadow = true;
+
+    /* ------ SF landmarks: bounded static meshes (draw-call count is O(1), not grid-scaled) ------ */
+    function buildBridge(x0, z0, x1, z1, color) {
+      var mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5, metalness: 0.3 });
+      var dx = x1 - x0, dz = z1 - z0, len = Math.hypot(dx, dz), yaw = Math.atan2(dx, dz);
+      var deck = new THREE.Mesh(new THREE.BoxGeometry(TILE * 1.4, 0.6, len), mat);
+      deck.position.set((x0 + x1) / 2, 4, (z0 + z1) / 2); deck.rotation.y = yaw;
+      deck.castShadow = true; deck.receiveShadow = true; scene.add(deck);
+      [0.28, 0.72].forEach(function (f) { var t = new THREE.Mesh(new THREE.BoxGeometry(2, 22, 2), mat);
+        t.position.set(x0 + dx * f, 11, z0 + dz * f); t.castShadow = true; scene.add(t); });
+    }
+    buildBridge(WATER_MARGIN * TILE * 0.5, 1.5 * TILE, WATER_MARGIN * TILE * 0.5, (WATER_MARGIN + 3) * TILE, 0xC0362C); // International Orange (NW)
+    buildBridge((MAP - 2) * TILE, 18 * TILE, (MAP - WATER_MARGIN) * TILE, 18 * TILE, 0x9AA3A8);                        // grey span (E)
+    // Embarcadero pier decks over the bay (visual only — the grid has no road here)
+    var pierMat = new THREE.MeshStandardMaterial({ color: 0x7a6a52, roughness: 0.9 });
+    for (var _p = 0; _p < PIER_COLS.length; _p++) {
+      var pd = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.9, 0.4, TILE * 3), pierMat);
+      pd.position.set(PIER_COLS[_p] * TILE + TILE / 2, 0.3, (WATER_MARGIN - 1.5) * TILE);
+      pd.receiveShadow = true; scene.add(pd);
+    }
+    // hero-tower caps (read heights from the engine's W._heroTowers so nothing drifts)
+    if (W._heroTowers) {
+      function towerCap(t, geo, mat) { if (!t) return; var m = new THREE.Mesh(geo, mat);
+        m.position.set(t.x * TILE + TILE / 2, t.h + 3, t.z * TILE + TILE / 2); m.castShadow = true; scene.add(m); }
+      towerCap(W._heroTowers.sales, new THREE.CylinderGeometry(TILE * 0.3, TILE * 0.42, 6, 12),
+        new THREE.MeshStandardMaterial({ color: 0x4A7A82, roughness: 0.2, metalness: 0.4 }));
+      towerCap(W._heroTowers.pyramid, new THREE.ConeGeometry(TILE * 0.42, 10, 4),
+        new THREE.MeshStandardMaterial({ color: 0xE8E8E0, roughness: 0.4 }));
+    }
 
     /* ----------------------------- Entity meshes -------------------------- */
     // Shared (allocate once) — the pools reuse these across all entities.
@@ -876,9 +919,17 @@
     function drawMini() {
       var sz = mini.width, sc = sz / WORLD;
       mctx.fillStyle = '#1a1d24'; mctx.fillRect(0, 0, sz, sz);
-      mctx.fillStyle = '#0e1014';
-      for (var z = 0; z < MAP; z += 2) for (var x = 0; x < MAP; x += 2) if (W.grid[z][x] === K.T_BUILDING)
+      // bay water behind the city
+      mctx.fillStyle = '#1f4f63';
+      for (var z = 0; z < MAP; z += 2) for (var x = 0; x < MAP; x += 2) if (W.grid[z][x] === TW)
         mctx.fillRect(x * TILE * sc, z * TILE * sc, TILE * sc * 2, TILE * sc * 2);
+      mctx.fillStyle = '#0e1014';
+      for (z = 0; z < MAP; z += 2) for (x = 0; x < MAP; x += 2) if (W.grid[z][x] === K.T_BUILDING)
+        mctx.fillRect(x * TILE * sc, z * TILE * sc, TILE * sc * 2, TILE * sc * 2);
+      // orange bridge landmark
+      mctx.strokeStyle = '#C0362C'; mctx.lineWidth = 2; mctx.beginPath();
+      mctx.moveTo(WATER_MARGIN * TILE * 0.5 * sc, 1.5 * TILE * sc);
+      mctx.lineTo(WATER_MARGIN * TILE * 0.5 * sc, (WATER_MARGIN + 3) * TILE * sc); mctx.stroke();
       // search ring
       if (W.wanted && W.lkpValid && !W.seen) { mctx.strokeStyle = 'rgba(120,170,255,.7)'; mctx.beginPath();
         mctx.arc(W.lkpX * sc, W.lkpZ * sc, (12 + W.searchTimer * 3), 0, 7); mctx.stroke(); }
@@ -923,7 +974,7 @@
       if (skyIsShader) { skyMat.uniforms.topColor.value.copy(_skyTop); skyMat.uniforms.bottomColor.value.copy(_skyBot); }
       else { skyMat.color.copy(_skyBot); }
       _fogCol.copy(_skyBot); scene.fog.color.copy(_fogCol); scene.background.copy(_skyBot);
-      scene.fog.near = 150 - wet * 90; scene.fog.far = 440 - wet * 200; // denser haze in the wet
+      scene.fog.near = 280 - wet * 90; scene.fog.far = 820 - wet * 200; // widened for WORLD=896; denser haze in the wet
       // windows glow as it gets dark
       bldgs.material.emissiveIntensity = 0.12 + (1 - day) * 1.0;
     }

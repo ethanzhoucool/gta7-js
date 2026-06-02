@@ -21,11 +21,17 @@
 
   /* ------------------------------- Constants ------------------------------ */
   var TILE = 14;            // world units per map tile
-  var MAP = 40;             // tiles per side
-  var WORLD = TILE * MAP;   // world extent (0..WORLD on X and Z)
-  var HALF = WORLD / 2;
+  var MAP = 64;             // tiles per side (bigger, denser SF-style city)
+  var WORLD = TILE * MAP;   // world extent (0..WORLD on X and Z) = 896
+  var HALF = WORLD / 2;     // 448
 
-  var T_ROAD = 0, T_BUILDING = 1, T_PARK = 2;
+  var T_ROAD = 0, T_BUILDING = 1, T_PARK = 2, T_WATER = 3;
+  // The bay wraps three edges (N / W / E); the south edge is the residential land mass.
+  var WATER_MARGIN = 5;     // tiles of water on each watered edge
+  // Downtown highrise zoning box (NE land, off the bay). Defined ONCE here so the
+  // renderer mirrors it via constants.DOWNTOWN — no second hardcoded copy to drift.
+  var DOWNTOWN = { x0: MAP - 22, x1: MAP - 8, z0: 8, z1: 22 };
+  var PIER_COLS = [10, 16, 22, 28, 34, 40]; // Embarcadero finger-pier columns (renderer decoration only)
 
   var GRAVITY = 26;         // units/s^2 (tuned, not literal 9.8 — feels right at this scale)
   var PLAYER_RADIUS = 0.9;
@@ -52,7 +58,7 @@
 
   var BULLET_SPEED = 120, BULLET_LIFE = 1.2, FIRE_CD = 0.14, BULLET_DMG = 34;
 
-  var NUM_PEDS = 36, NUM_TRAFFIC = 16;
+  var NUM_PEDS = 64, NUM_TRAFFIC = 30; // scaled ~2.5x to fill the bigger map
   var PED_WALK = 3.0, PED_FLEE = 8.5;
   var POLICE_TOP = 42, POLICE_SIGHT = 70, POLICE_FIRE_RANGE = 45, POLICE_FIRE_CD = 1.2;
   // Foot officers: cops exit the cruiser and fight on foot.
@@ -99,18 +105,30 @@
 
   /* ----------------------------- World creation --------------------------- */
   function isRoadLane(x, y) { return (x % 5 < 2) || (y % 5 < 2); }
+  var MARKET_W = 2;                                   // diagonal avenue width
+  function onMarket(x, z) { var d = x - z; return d >= -MARKET_W && d <= 0; } // 2-wide NE-SW band
   function generateGrid() {
-    var g = new Array(MAP);
-    for (var z = 0; z < MAP; z++) {
+    var g = new Array(MAP), x, z;
+    for (z = 0; z < MAP; z++) {
       g[z] = new Array(MAP);
-      for (var x = 0; x < MAP; x++) {
+      for (x = 0; x < MAP; x++) {
+        // bay on N (z<margin), W (x<margin), E (x>=MAP-margin); the S edge stays land
+        if (z < WATER_MARGIN || x < WATER_MARGIN || x >= MAP - WATER_MARGIN) { g[z][x] = T_WATER; continue; }
         if (isRoadLane(x, z)) g[z][x] = T_ROAD;
         else {
           var bx = (x / 5) | 0, bz = (z / 5) | 0;
-          g[z][x] = hash2(bx + 7, bz + 11) < 0.18 ? T_PARK : T_BUILDING;
+          g[z][x] = hash2(bx + 7, bz + 11) < 0.16 ? T_PARK : T_BUILDING;
         }
       }
     }
+    // Golden Gate Park: a long green rectangle on the SW land
+    for (z = MAP - 18; z < MAP - 6; z++) for (x = WATER_MARGIN + 1; x < WATER_MARGIN + 13; x++)
+      if (z >= 0 && z < MAP && x < MAP) g[z][x] = T_PARK;
+    // Market St diagonal LAST so the avenue reads continuous across blocks (never over water)
+    for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++)
+      if (g[z][x] !== T_WATER && onMarket(x, z)) g[z][x] = T_ROAD;
+    // NOTE: piers are NOT carved into the grid — they're visual-only decks in the renderer,
+    // so a car can't drive off a pier tip into the open bay.
     return g;
   }
 
@@ -153,18 +171,27 @@
       trauma: 0, milestones: {}                           // screen-shake signal + one-time unlock flags
     };
 
-    // precompute building heights for the renderer (deterministic)
+    // precompute building heights for the renderer (deterministic). Downtown zoning box
+    // (DOWNTOWN, module scope) is exported via constants so the renderer mirrors it.
+    function inDowntown(x, z) { return x >= DOWNTOWN.x0 && x < DOWNTOWN.x1 && z >= DOWNTOWN.z0 && z < DOWNTOWN.z1; }
     var heights = new Array(MAP);
     for (var z = 0; z < MAP; z++) { heights[z] = new Array(MAP);
-      for (var x = 0; x < MAP; x++) heights[z][x] = 6 + Math.floor(hash2(x, z) * 26); }
+      for (var x = 0; x < MAP; x++) {
+        if (inDowntown(x, z)) heights[z][x] = 22 + Math.floor(hash2(x, z) * 18); // 22..40 glass towers
+        else heights[z][x] = 4 + Math.floor(hash2(x, z) * 6);                    // 4..9 pastel low-rise
+      }
+    }
+    heights[14][MAP - 14] = 52; // Salesforce-style hero tower (tile x=50, z=14)
+    heights[12][MAP - 18] = 46; // Transamerica-style hero spike (tile x=46, z=12)
     W.buildingHeights = heights;
+    W._heroTowers = { sales: { x: MAP - 14, z: 14, h: 52 }, pyramid: { x: MAP - 18, z: 12, h: 46 } };
 
     /* ----- map helpers ----- */
     function tileType(tx, tz) {
       if (tx < 0 || tz < 0 || tx >= MAP || tz >= MAP) return T_BUILDING;
       return W.grid[tz][tx];
     }
-    function solidTile(tx, tz) { return tileType(tx, tz) === T_BUILDING; }
+    function solidTile(tx, tz) { var t = tileType(tx, tz); return t === T_BUILDING || t === T_WATER; } // water blocks too — no driving into the bay
     function solidAt(x, z) { return solidTile(Math.floor(x / TILE), Math.floor(z / TILE)); }
 
     function circleHitsSolid(x, z, r) {
@@ -194,11 +221,12 @@
       return true;
     }
     function randomRoad() {
-      for (var i = 0; i < 400; i++) {
-        var tx = randInt(2, MAP - 3), tz = randInt(2, MAP - 3);
+      // clamp the sample box to LAND (off the water margin) so nothing ever spawns in the bay
+      for (var i = 0; i < 500; i++) {
+        var tx = randInt(WATER_MARGIN + 1, MAP - WATER_MARGIN - 2), tz = randInt(WATER_MARGIN + 1, MAP - 2);
         if (tileType(tx, tz) === T_ROAD) return { x: tx * TILE + TILE / 2, z: tz * TILE + TILE / 2 };
       }
-      return { x: HALF, z: HALF };
+      return { x: HALF, z: HALF + WATER_MARGIN * TILE }; // fallback lands on the southern land mass
     }
     function roadNear(cx, cz, minD, maxD) {
       for (var i = 0; i < 140; i++) { var p = randomRoad(); var d = dist(p.x, p.z, cx, cz); if (d >= minD && d <= maxD) return p; }
@@ -274,9 +302,9 @@
     // Income tuned (measured) so passive < active play: all 3 ≈ $1.4k/min vs courier
     // ≈ $1.5k/min — a meaningful supplement that pays back in ~30 min, never a replacement.
     var PROPERTY_DEFS = [
-      { name: 'Tinytown Studio',  price: 3000,  income: 2,  tx: 12, tz: 32 },
-      { name: 'Vespucci Condo',   price: 9000,  income: 6,  tx: 9,  tz: 9 },
-      { name: 'Downtown Penthouse', price: 30000, income: 15, tx: 31, tz: 10 }
+      { name: 'Tinytown Studio',  price: 3000,  income: 2,  tx: 20, tz: 50 },         // SW residential (clear of the park)
+      { name: 'Vespucci Condo',   price: 9000,  income: 6,  tx: 14, tz: 14 },         // NW near the bay
+      { name: 'Downtown Penthouse', price: 30000, income: 15, tx: MAP - 12, tz: 16 }  // NE downtown
     ];
     // Shop catalogs: pure data + a pure effect fn(W). Price is deducted by buyItem.
     var SHOP_CATALOG = {
@@ -301,10 +329,10 @@
       ]}
     };
     var SHOP_DEFS = [ // tx,tz on road lanes (col%5<2 or row%5<2) so the door is reachable
-      { type: 'gun',    tx: 6,  tz: 6  },
-      { type: 'car',    tx: 30, tz: 6  },
-      { type: 'realty', tx: 6,  tz: 31 },
-      { type: 'style',  tx: 31, tz: 31 }
+      { type: 'gun',    tx: 10,       tz: 12 },  // NW
+      { type: 'car',    tx: MAP - 14, tz: 12 },  // NE near downtown
+      { type: 'realty', tx: 22,       tz: 52 },  // SW (clear of the park)
+      { type: 'style',  tx: MAP - 14, tz: 52 }   // SE
     ];
 
     function snapToRoad(tx, tz) {
@@ -327,7 +355,7 @@
       W.propPos = PROPERTY_DEFS.map(function (d) { return snapToRoad(d.tx, d.tz); });
     }
     function placeStores() {
-      W.stores = []; for (var i = 0; i < 4; i++) { var p = randomRoad(); W.stores.push({ x: p.x, z: p.z, cooldown: 0, id: (W._id = (W._id || 0) + 1) }); }
+      W.stores = []; for (var i = 0; i < 7; i++) { var p = randomRoad(); W.stores.push({ x: p.x, z: p.z, cooldown: 0, id: (W._id = (W._id || 0) + 1) }); } // more stores for the bigger map
     }
 
     function grantCar(tier) {
@@ -456,7 +484,7 @@
     }
 
     /* ============================ COURIER JOBS =========================== */
-    var DEPOT_DEFS = [{ tx: 18, tz: 6 }, { tx: 6, tz: 18 }, { tx: 31, tz: 22 }];
+    var DEPOT_DEFS = [{ tx: MAP - 16, tz: 10 }, { tx: 10, tz: 30 }, { tx: MAP - 18, tz: 48 }];
     var JOB_RADIUS = 6.5, JOB_TARGET_SPEED = 18, JOB_GRACE = 6, JOB_RATE = 2.2, JOB_STREAK_STEP = 60;
     // GTA-taxi model (researched): a SMALL base fare; the real money is the consecutive
     // -delivery STREAK bonus (+JOB_STREAK_STEP per chain tier) that resets if you fail.
@@ -555,9 +583,9 @@
     // zones sit in the map corners (MAP=40 tiles, ~14u each) so the central spawn
     // area stays neutral — you choose to roll into a turf war, you don't spawn in one.
     var ZONE_DEFS = [
-      { name: 'The Docks', cx: 34, cz: 34, income: 8 },
-      { name: 'Little Seoul', cx: 6, cz: 34, income: 8 },
-      { name: 'Vespucci', cx: 34, cz: 6, income: 8 }
+      { name: 'The Docks',   cx: MAP - 12, cz: 10, income: 8 }, // NE by the piers
+      { name: 'The Mission', cx: 22,       cz: 54, income: 8 }, // SW (clear of the park)
+      { name: 'Bayview',     cx: MAP - 12, cz: 54, income: 8 }  // SE
     ];
     var ZONE_R = 42, ZONE_MAX_GANG = 8;
     function placeZones() {
@@ -587,20 +615,20 @@
 
     function districtName(x, z) {
       var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE);
-      if (tx < MAP / 2 && tz < MAP / 2) return 'Vespucci';
-      if (tx >= MAP / 2 && tz < MAP / 2) return 'Downtown';
-      if (tx < MAP / 2) return 'Little Seoul';
-      return 'the Docks';
+      if (tz < MAP * 0.4 && tx >= MAP / 2) return 'Downtown';
+      if (tz < MAP * 0.4) return 'the Marina';
+      if (tx < MAP / 2) return 'the Mission';
+      return 'Bayview';
     }
 
     /* ----- populate ----- */
     function populate() {
       var i, p;
       for (i = 0; i < NUM_TRAFFIC; i++) { p = randomRoad(); var c = makeCar(p.x, p.z, 'ai'); c.yaw = c.aiDir; c.npc = makePed(p.x, p.z, false); c.npc.inCar = true; W.cars.push(c); }
-      for (i = 0; i < 8; i++) { p = randomRoad(); var pk = makeCar(p.x, p.z, null); pk.yaw = choice([0, Math.PI / 2, Math.PI, -Math.PI / 2]); W.cars.push(pk); }
+      for (i = 0; i < 14; i++) { p = randomRoad(); var pk = makeCar(p.x, p.z, null); pk.yaw = choice([0, Math.PI / 2, Math.PI, -Math.PI / 2]); W.cars.push(pk); }
       for (i = 0; i < NUM_PEDS; i++) { p = randomRoad(); W.peds.push(makePed(p.x, p.z, Math.random() < 0.25)); }
-      for (i = 0; i < 22; i++) { p = randomRoad(); W.pickups.push(makePickup(p.x, p.z, 'cash')); }
-      for (i = 0; i < 6; i++) { p = randomRoad(); W.pickups.push(makePickup(p.x, p.z, 'health')); }
+      for (i = 0; i < 40; i++) { p = randomRoad(); W.pickups.push(makePickup(p.x, p.z, 'cash')); }
+      for (i = 0; i < 10; i++) { p = randomRoad(); W.pickups.push(makePickup(p.x, p.z, 'health')); }
     }
 
     function spawnPlayer() {
@@ -1348,6 +1376,7 @@
       world: W,
       step: step,
       constants: { TILE: TILE, MAP: MAP, WORLD: WORLD, T_ROAD: T_ROAD, T_BUILDING: T_BUILDING, T_PARK: T_PARK,
+        T_WATER: T_WATER, WATER_MARGIN: WATER_MARGIN, DOWNTOWN: DOWNTOWN, PIER_COLS: PIER_COLS,
         CAR_HALF_L: CAR_HALF_L, CAR_HALF_W: CAR_HALF_W, PLAYER_HEIGHT: PLAYER_HEIGHT, WANTED_MAX: WANTED_MAX,
         CRIME: CRIME, SEARCH_GIVEUP_BY_STAR: SEARCH_GIVEUP_BY_STAR },
       _internal: { tryEnterExit: tryEnterExit, robNearest: robNearest, fireWeapon: fireWeapon, commitCrime: commitCrime,
