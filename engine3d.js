@@ -21,17 +21,26 @@
 
   /* ------------------------------- Constants ------------------------------ */
   var TILE = 14;            // world units per map tile
-  var MAP = 64;             // tiles per side (bigger, denser SF-style city)
-  var WORLD = TILE * MAP;   // world extent (0..WORLD on X and Z) = 896
-  var HALF = WORLD / 2;     // 448
+  var MAP = 80;             // tiles per side (bigger SF-style city + a northern landmass)
+  var WORLD = TILE * MAP;   // world extent (0..WORLD on X and Z) = 1120
+  var HALF = WORLD / 2;     // 560
 
   var T_ROAD = 0, T_BUILDING = 1, T_PARK = 2, T_WATER = 3;
-  // The bay wraps three edges (N / W / E); the south edge is the residential land mass.
-  var WATER_MARGIN = 5;     // tiles of water on each watered edge
-  // Downtown highrise zoning box (NE land, off the bay). Defined ONCE here so the
-  // renderer mirrors it via constants.DOWNTOWN — no second hardcoded copy to drift.
-  var DOWNTOWN = { x0: MAP - 22, x1: MAP - 8, z0: 8, z1: 22 };
-  var PIER_COLS = [10, 16, 22, 28, 34, 40]; // Embarcadero finger-pier columns (renderer decoration only)
+  // Geography: bay on the W / E / N edges; a Golden Gate STRAIT (water band) splits a small
+  // northern landmass (Marin, z in [WATER_MARGIN, CHANNEL_Z0)) from the main city (SF, z >=
+  // CHANNEL_Z1, running to the south edge). The Golden Gate bridge is a DRIVABLE road
+  // causeway across the strait at columns [BRIDGE_X0, BRIDGE_X1); the rest of the strait is
+  // solid water, so you can only cross on the bridge (and can't drive off its sides).
+  var WATER_MARGIN = 5;
+  var CHANNEL_Z0 = 20, CHANNEL_Z1 = 28;     // the strait (8 tiles of water)
+  var BRIDGE_X0 = 40, BRIDGE_X1 = 42;       // bridge road columns 40,41 (2 lanes wide)
+  // Downtown highrise zoning box (SF financial district). Defined ONCE here so the renderer
+  // mirrors it via constants.DOWNTOWN — no second hardcoded copy to drift.
+  var DOWNTOWN = { x0: 50, x1: 68, z0: 32, z1: 46 };
+  var PIER_COLS = [12, 20, 60, 68];         // Embarcadero piers along the SF channel shore (renderer only)
+  // Two hero towers inside downtown (building tiles: x%5>=2 && z%5>=2). One source of truth
+  // for the grid (forced building), the height precompute, and the renderer cap.
+  var HERO_SALES = { x: 62, z: 38, h: 52 }, HERO_PYRAMID = { x: 57, z: 43, h: 46 };
 
   var GRAVITY = 26;         // units/s^2 (tuned, not literal 9.8 — feels right at this scale)
   var PLAYER_RADIUS = 0.9;
@@ -107,13 +116,17 @@
   function isRoadLane(x, y) { return (x % 5 < 2) || (y % 5 < 2); }
   var MARKET_W = 2;                                   // diagonal avenue width
   function onMarket(x, z) { var d = x - z; return d >= -MARKET_W && d <= 0; } // 2-wide NE-SW band
+  function inChannel(z) { return z >= CHANNEL_Z0 && z < CHANNEL_Z1; }
+  function onBridge(x) { return x >= BRIDGE_X0 && x < BRIDGE_X1; }
   function generateGrid() {
     var g = new Array(MAP), x, z;
     for (z = 0; z < MAP; z++) {
       g[z] = new Array(MAP);
       for (x = 0; x < MAP; x++) {
-        // bay on N (z<margin), W (x<margin), E (x>=MAP-margin); the S edge stays land
+        // bay on N (z<margin), W (x<margin), E (x>=MAP-margin)
         if (z < WATER_MARGIN || x < WATER_MARGIN || x >= MAP - WATER_MARGIN) { g[z][x] = T_WATER; continue; }
+        // Golden Gate strait: water, except the drivable bridge columns
+        if (inChannel(z)) { g[z][x] = onBridge(x) ? T_ROAD : T_WATER; continue; }
         if (isRoadLane(x, z)) g[z][x] = T_ROAD;
         else {
           var bx = (x / 5) | 0, bz = (z / 5) | 0;
@@ -121,14 +134,19 @@
         }
       }
     }
-    // Golden Gate Park: a long green rectangle on the SW land
-    for (z = MAP - 18; z < MAP - 6; z++) for (x = WATER_MARGIN + 1; x < WATER_MARGIN + 13; x++)
+    // Golden Gate Park: a long green rectangle on the SF SW land (south of the strait)
+    for (z = MAP - 16; z < MAP - 4; z++) for (x = WATER_MARGIN + 1; x < WATER_MARGIN + 13; x++)
       if (z >= 0 && z < MAP && x < MAP) g[z][x] = T_PARK;
-    // Market St diagonal LAST so the avenue reads continuous across blocks (never over water)
-    for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++)
+    // Market St diagonal in SF only (never over water/strait) so the avenue reads continuous
+    for (z = CHANNEL_Z1; z < MAP; z++) for (x = 0; x < MAP; x++)
       if (g[z][x] !== T_WATER && onMarket(x, z)) g[z][x] = T_ROAD;
-    // NOTE: piers are NOT carved into the grid — they're visual-only decks in the renderer,
-    // so a car can't drive off a pier tip into the open bay.
+    // guarantee the bridge connects to BOTH shores: force the bridge columns to road from the
+    // Marin approach (just N of the strait) through SF (just S of it), so the causeway is continuous
+    for (z = WATER_MARGIN; z < MAP; z++) for (x = BRIDGE_X0; x < BRIDGE_X1; x++)
+      if (g[z][x] !== T_WATER) g[z][x] = T_ROAD;
+    // hero-tower footprints are guaranteed buildings (so the renderer's tall towers render)
+    g[HERO_SALES.z][HERO_SALES.x] = T_BUILDING; g[HERO_PYRAMID.z][HERO_PYRAMID.x] = T_BUILDING;
+    // NOTE: piers are NOT carved into the grid — they're visual-only decks in the renderer.
     return g;
   }
 
@@ -181,10 +199,10 @@
         else heights[z][x] = 4 + Math.floor(hash2(x, z) * 6);                    // 4..9 pastel low-rise
       }
     }
-    heights[14][MAP - 14] = 52; // Salesforce-style hero tower (tile x=50, z=14)
-    heights[12][MAP - 18] = 46; // Transamerica-style hero spike (tile x=46, z=12)
+    heights[HERO_SALES.z][HERO_SALES.x] = HERO_SALES.h;       // Salesforce-style hero tower
+    heights[HERO_PYRAMID.z][HERO_PYRAMID.x] = HERO_PYRAMID.h;  // Transamerica-style hero spike
     W.buildingHeights = heights;
-    W._heroTowers = { sales: { x: MAP - 14, z: 14, h: 52 }, pyramid: { x: MAP - 18, z: 12, h: 46 } };
+    W._heroTowers = { sales: HERO_SALES, pyramid: HERO_PYRAMID };
 
     /* ----- map helpers ----- */
     function tileType(tx, tz) {
@@ -302,9 +320,9 @@
     // Income tuned (measured) so passive < active play: all 3 ≈ $1.4k/min vs courier
     // ≈ $1.5k/min — a meaningful supplement that pays back in ~30 min, never a replacement.
     var PROPERTY_DEFS = [
-      { name: 'Tinytown Studio',  price: 3000,  income: 2,  tx: 20, tz: 50 },         // SW residential (clear of the park)
-      { name: 'Vespucci Condo',   price: 9000,  income: 6,  tx: 14, tz: 14 },         // NW near the bay
-      { name: 'Downtown Penthouse', price: 30000, income: 15, tx: MAP - 12, tz: 16 }  // NE downtown
+      { name: 'Tinytown Studio',    price: 3000,  income: 2,  tx: 22, tz: 62 },  // SF residential SW
+      { name: 'Marin Hideaway',     price: 9000,  income: 6,  tx: 30, tz: 10 },  // across the bridge (Marin)
+      { name: 'Downtown Penthouse', price: 30000, income: 15, tx: 60, tz: 36 }   // SF downtown
     ];
     // Shop catalogs: pure data + a pure effect fn(W). Price is deducted by buyItem.
     var SHOP_CATALOG = {
@@ -329,10 +347,10 @@
       ]}
     };
     var SHOP_DEFS = [ // tx,tz on road lanes (col%5<2 or row%5<2) so the door is reachable
-      { type: 'gun',    tx: 10,       tz: 12 },  // NW
-      { type: 'car',    tx: MAP - 14, tz: 12 },  // NE near downtown
-      { type: 'realty', tx: 22,       tz: 52 },  // SW (clear of the park)
-      { type: 'style',  tx: MAP - 14, tz: 52 }   // SE
+      { type: 'gun',    tx: 12, tz: 34 },  // SF west
+      { type: 'car',    tx: 66, tz: 32 },  // SF near downtown
+      { type: 'realty', tx: 16, tz: 68 },  // SF SW
+      { type: 'style',  tx: 66, tz: 68 }   // SF SE
     ];
 
     function snapToRoad(tx, tz) {
@@ -487,7 +505,7 @@
     }
 
     /* ============================ COURIER JOBS =========================== */
-    var DEPOT_DEFS = [{ tx: MAP - 16, tz: 10 }, { tx: 10, tz: 30 }, { tx: MAP - 18, tz: 48 }];
+    var DEPOT_DEFS = [{ tx: 64, tz: 30 }, { tx: 12, tz: 50 }, { tx: 66, tz: 70 }, { tx: 30, tz: 12 }]; // 3 in SF + 1 in Marin
     var JOB_RADIUS = 6.5, JOB_TARGET_SPEED = 18, JOB_GRACE = 6, JOB_RATE = 2.2, JOB_STREAK_STEP = 60;
     // GTA-taxi model (researched): a SMALL base fare; the real money is the consecutive
     // -delivery STREAK bonus (+JOB_STREAK_STEP per chain tier) that resets if you fail.
@@ -586,9 +604,9 @@
     // zones sit in the map corners (MAP=40 tiles, ~14u each) so the central spawn
     // area stays neutral — you choose to roll into a turf war, you don't spawn in one.
     var ZONE_DEFS = [
-      { name: 'The Docks',   cx: MAP - 12, cz: 10, income: 8 }, // NE by the piers
-      { name: 'The Mission', cx: 22,       cz: 54, income: 8 }, // SW (clear of the park)
-      { name: 'Bayview',     cx: MAP - 12, cz: 54, income: 8 }  // SE
+      { name: 'The Docks',   cx: 64, cz: 32, income: 8 }, // SF NE waterfront
+      { name: 'The Mission', cx: 20, cz: 70, income: 8 }, // SF SW
+      { name: 'Bayview',     cx: 64, cz: 70, income: 8 }  // SF SE
     ];
     var ZONE_R = 42, ZONE_MAX_GANG = 8;
     function placeZones() {
@@ -618,9 +636,10 @@
 
     function districtName(x, z) {
       var tx = Math.floor(x / TILE), tz = Math.floor(z / TILE);
-      if (tz < MAP * 0.4 && tx >= MAP / 2) return 'Downtown';
-      if (tz < MAP * 0.4) return 'the Marina';
-      if (tx < MAP / 2) return 'the Mission';
+      if (tz < CHANNEL_Z0) return 'Marin';                                   // across the bridge
+      if (tz < CHANNEL_Z1) return 'the Golden Gate';                          // on the strait/bridge
+      if (tx >= DOWNTOWN.x0 && tx < DOWNTOWN.x1 && tz < DOWNTOWN.z1 + 6) return 'Downtown';
+      if (tx < MAP / 2) return tz > MAP * 0.7 ? 'the Mission' : 'the Marina';
       return 'Bayview';
     }
 
@@ -1412,6 +1431,7 @@
       step: step,
       constants: { TILE: TILE, MAP: MAP, WORLD: WORLD, T_ROAD: T_ROAD, T_BUILDING: T_BUILDING, T_PARK: T_PARK,
         T_WATER: T_WATER, WATER_MARGIN: WATER_MARGIN, DOWNTOWN: DOWNTOWN, PIER_COLS: PIER_COLS,
+        CHANNEL_Z0: CHANNEL_Z0, CHANNEL_Z1: CHANNEL_Z1, BRIDGE_X0: BRIDGE_X0, BRIDGE_X1: BRIDGE_X1,
         CAR_HALF_L: CAR_HALF_L, CAR_HALF_W: CAR_HALF_W, PLAYER_HEIGHT: PLAYER_HEIGHT, WANTED_MAX: WANTED_MAX,
         CRIME: CRIME, SEARCH_GIVEUP_BY_STAR: SEARCH_GIVEUP_BY_STAR },
       _internal: { tryEnterExit: tryEnterExit, robNearest: robNearest, fireWeapon: fireWeapon, commitCrime: commitCrime,

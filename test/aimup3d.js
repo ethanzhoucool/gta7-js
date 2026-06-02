@@ -40,17 +40,21 @@ var PAGE = 'file://' + path.resolve(__dirname, '..', 'game3d.html');
 
   // 3) end-to-end: spawn a chopper overhead, aim up at it, and confirm bullets damage it
   out.steps.heliTakesDamage = await page.evaluate(function () {
-    var eng = window.__ENG, W = eng.world;
-    W.player.inCar = false; W.player.x = 300; W.player.z = 300; W.wanted = 4; W.lkpValid = true; W.lkpX = 300; W.lkpZ = 300;
-    for (var i = 0; i < 600 && W.helis.length === 0; i++) { W.player.x = 300; W.player.z = 300; W.wanted = 4; eng.step(1 / 60, {}); }
+    var eng = window.__ENG, W = eng.world, C = eng.constants;
+    // flatten to an all-road grid + clear peds so bullets aren't eaten by buildings/water
+    for (var z = 0; z < C.MAP; z++) for (var x = 0; x < C.MAP; x++) W.grid[z][x] = C.T_ROAD;
+    for (var pi = 0; pi < W.peds.length; pi++) W.peds[pi].alive = false;
+    var ax = 560, az = 700;   // clearly on the SF landmass
+    W.player.inCar = false; W.player.x = ax; W.player.z = az; W.wanted = 4; W.lkpValid = true; W.lkpX = ax; W.lkpZ = az;
+    for (var i = 0; i < 600 && W.helis.length === 0; i++) { W.player.x = ax; W.player.z = az; W.wanted = 4; eng.step(1 / 60, {}); }
     if (!W.helis.length) return false;
-    var h = W.helis[0]; var hp0 = h.hp;
+    var hp0 = W.helis[0].hp;
     // fire straight at the chopper using the engine's own muzzle math (renderer solve is
     // covered by steps 1–2). Pin it overhead and shred it with a pitched-up SMG burst.
     W.player.weapon = 'smg'; W.player.weapons.smg = true; W.player.ammo = 999999;
-    var hz = 334, hy = 24, yaw = Math.atan2(0, hz - 300), pitch = Math.atan2(hy - 1.1, hz - 300);
+    var hz = az + 34, hy = 24, yaw = Math.atan2(0, hz - az), pitch = Math.atan2(hy - 1.1, hz - az);
     for (var j = 0; j < 200 && W.helis.length; j++) {
-      W.player.x = 300; W.player.z = 300; if (W.helis[0]) { W.helis[0].x = 300; W.helis[0].z = hz; W.helis[0].y = hy; }
+      W.player.x = ax; W.player.z = az; if (W.helis[0]) { W.helis[0].x = ax; W.helis[0].z = hz; W.helis[0].y = hy; }
       W.fireCd = 0; eng.step(1 / 60, { shoot: true, aimYaw: yaw, aimPitch: pitch });
     }
     return W.helis.length === 0 || W.helis[0].hp < hp0;

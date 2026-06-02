@@ -544,24 +544,33 @@ function run() {
       assert.ok(PW.player.inCar === true, 'still driving the cruiser after a short drive');
     })();
 
-  // 9k) SF map: bigger world, bay on three edges, water-tight grid, land-only spawns,
-  //     downtown highrise zoning vs residential low-rise, scaled population.
+  // 9k) SF map: bigger world, bay edges + a Golden Gate strait with a DRIVABLE bridge,
+  //     water-tight elsewhere, land-only spawns, downtown zoning, scaled population.
   (function mapChecks() {
     var me = GTA3D.createEngine(), MW = me.world, C = me.constants;
-    assert.strictEqual(C.MAP, 64, 'MAP scaled to 64');
-    assert.strictEqual(C.WORLD, 896, 'WORLD = 896');
+    assert.strictEqual(C.MAP, 80, 'MAP scaled to 80');
+    assert.strictEqual(C.WORLD, 1120, 'WORLD = 1120');
     assert.strictEqual(C.T_WATER, 3, 'T_WATER exported');
     assert.strictEqual(C.WATER_MARGIN, 5, 'WATER_MARGIN exported');
-    assert.ok(C.DOWNTOWN && C.DOWNTOWN.x0 === 42 && C.DOWNTOWN.x1 === 56, 'DOWNTOWN box exported');
-    // water-tight: every watered-edge tile is water, and NO road is carved into the bay
-    var WM = C.WATER_MARGIN, badEdge = 0, roadInWater = 0;
+    assert.ok(C.DOWNTOWN && C.DOWNTOWN.x0 === 50 && C.DOWNTOWN.x1 === 68, 'DOWNTOWN box exported');
+    assert.ok(C.CHANNEL_Z0 === 20 && C.CHANNEL_Z1 === 28 && C.BRIDGE_X0 === 40 && C.BRIDGE_X1 === 42, 'strait + bridge constants exported');
+    // water-tight: edge bay + strait are water, EXCEPT the bridge columns. No OTHER road in water.
+    var WM = C.WATER_MARGIN, badWater = 0, strayRoadInWater = 0;
     for (var z = 0; z < C.MAP; z++) for (var x = 0; x < C.MAP; x++) {
-      var inBand = (z < WM || x < WM || x >= C.MAP - WM);
-      if (inBand && MW.grid[z][x] !== C.T_WATER) badEdge++;
-      if (inBand && MW.grid[z][x] === C.T_ROAD) roadInWater++;
+      var onEdge = (z < WM || x < WM || x >= C.MAP - WM);
+      var inStrait = (z >= C.CHANNEL_Z0 && z < C.CHANNEL_Z1);
+      var isBridgeCol = (x >= C.BRIDGE_X0 && x < C.BRIDGE_X1);
+      if (onEdge && !isBridgeCol && MW.grid[z][x] !== C.T_WATER) badWater++;     // edges all water (bridge may cross)
+      if (inStrait && !isBridgeCol && MW.grid[z][x] !== C.T_WATER) badWater++;   // strait all water off the bridge
+      // a road tile in water that ISN'T a bridge column = a drive-off bug
+      if ((onEdge || inStrait) && !isBridgeCol && MW.grid[z][x] === C.T_ROAD) strayRoadInWater++;
     }
-    assert.strictEqual(badEdge, 0, 'every watered-edge tile is water');
-    assert.strictEqual(roadInWater, 0, 'no road carved into the bay (no pier drive-off)');
+    assert.strictEqual(badWater, 0, 'bay edges + strait are water (off the bridge)');
+    assert.strictEqual(strayRoadInWater, 0, 'no stray road in water (only the bridge crosses)');
+    // the bridge is a CONTINUOUS drivable causeway across the whole strait, joined to both shores
+    var bridgeOk = MW.grid[C.CHANNEL_Z0 - 1][C.BRIDGE_X0] === C.T_ROAD && MW.grid[C.CHANNEL_Z1][C.BRIDGE_X0] === C.T_ROAD;
+    for (z = C.CHANNEL_Z0; z < C.CHANNEL_Z1; z++) for (x = C.BRIDGE_X0; x < C.BRIDGE_X1; x++) if (MW.grid[z][x] !== C.T_ROAD) bridgeOk = false;
+    assert.ok(bridgeOk, 'the Golden Gate bridge is a continuous road across the strait, joined to Marin + SF');
     function tileAt(x, z) { var tx = Math.floor(x / C.TILE), tz = Math.floor(z / C.TILE); return MW.grid[tz] ? MW.grid[tz][tx] : C.T_WATER; }
     assert.ok(tileAt(MW.player.x, MW.player.z) !== C.T_WATER, 'player spawns on land, not the bay');
     function allDry(arr, label) { for (var i = 0; i < arr.length; i++) assert.ok(tileAt(arr[i].x, arr[i].z) !== C.T_WATER, label + ' ' + i + ' must be on land'); }
@@ -569,10 +578,12 @@ function run() {
     allDry(MW.shops, 'shop'); allDry(MW.propPos, 'property'); allDry(MW.jobDepots, 'depot'); allDry(MW.zones, 'zone');
     function allRoad(arr, label) { for (var i = 0; i < arr.length; i++) assert.strictEqual(tileAt(arr[i].x, arr[i].z), C.T_ROAD, label + ' ' + i + ' must snap to a road'); }
     allRoad(MW.shops, 'shop'); allRoad(MW.jobDepots, 'depot'); allRoad(MW.propPos, 'property'); allRoad(MW.zones, 'zone');
-    // downtown zoning: hero towers set; downtown tiles are tall, residential tiles are low
-    assert.ok(MW.buildingHeights[14][50] === 52 && MW.buildingHeights[12][46] === 46, 'hero towers set');
-    assert.ok(MW.buildingHeights[10][48] >= 22, 'downtown tiles are highrise');   // inside DOWNTOWN
-    assert.ok(MW.buildingHeights[55][10] <= 9, 'residential tiles are low-rise');  // SW, outside
+    // downtown zoning: hero towers set (on building tiles); downtown tile tall, residential low
+    var hs = MW._heroTowers.sales, hp = MW._heroTowers.pyramid;
+    assert.ok(MW.buildingHeights[hs.z][hs.x] === hs.h && MW.buildingHeights[hp.z][hp.x] === hp.h, 'hero towers set');
+    assert.ok(MW.grid[hs.z][hs.x] === C.T_BUILDING && MW.grid[hp.z][hp.x] === C.T_BUILDING, 'hero towers sit on building tiles');
+    assert.ok(MW.buildingHeights[38][62] >= 22, 'downtown tiles are highrise');   // inside DOWNTOWN
+    assert.ok(MW.buildingHeights[72][12] <= 9, 'residential tiles are low-rise');  // SF SW, outside downtown
     // population scaled to fill the bigger map
     var traffic = MW.cars.filter(function (c) { return c.driver === 'ai'; }).length;
     assert.ok(MW.peds.length >= 60, 'ped population scaled (' + MW.peds.length + ')');
@@ -580,6 +591,26 @@ function run() {
     assert.strictEqual(MW.stores.length, 7, '7 stores');
     assert.strictEqual(MW.pickups.filter(function (p) { return p.type === 'cash'; }).length, 40, '40 cash pickups');
     assert.strictEqual(MW.pickups.filter(function (p) { return p.type === 'health'; }).length, 10, '10 health pickups');
+  })();
+
+  // 9m) you can actually DRIVE across the Golden Gate bridge (not just that it's road):
+  //     a car on the Marin approach, facing south, must cross the strait into SF intact.
+  (function driveBridge() {
+    var be = GTA3D.createEngine(), BW = be.world, C = be.constants, T = C.TILE;
+    for (var pi = 0; pi < BW.peds.length; pi++) BW.peds[pi].alive = false;
+    BW.police = []; BW.wanted = 0;
+    var car = null; for (var i = 0; i < BW.cars.length; i++) { if (BW.cars[i].driver === 'ai') { car = BW.cars[i]; break; } }
+    assert.ok(car, 'a car exists to drive');
+    if (car.npc) { car.npc.inCar = false; car.npc = null; }
+    var cx = (C.BRIDGE_X0 + 1) * T;                 // center of the 2-lane bridge road (x≈574)
+    car.x = cx; car.z = (C.CHANNEL_Z0 - 2) * T;      // Marin approach, just N of the strait
+    car.yaw = 0; car.vx = 0; car.vz = 0; car.speed = 0; car.steer = 0; car.carHp = 200; car.onFire = false; car.exploded = false;
+    car.driver = 'player'; BW.playerCar = car; BW.player.inCar = true; BW.player.car = car;
+    var startZ = car.z, crossed = false;
+    for (var k = 0; k < 500 && !crossed; k++) { be.step(STEP, { forward: true }); if (car.z > (C.CHANNEL_Z1 + 2) * T) crossed = true; checkInvariants(be, 'drive-bridge'); }
+    assert.ok(crossed, 'drove a car clear across the strait into SF (z ' + startZ.toFixed(0) + '→' + car.z.toFixed(0) + ')');
+    assert.ok(!car.exploded && BW.player.inCar, 'still driving, intact, after crossing the bridge');
+    assert.ok(Math.abs(car.x - cx) < T, 'stayed on the bridge deck (did not veer into the bay)');
   })();
 
   // 10) long soak with pseudo-random input (now also exercises economy inputs)

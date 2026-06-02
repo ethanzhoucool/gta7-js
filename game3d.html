@@ -159,9 +159,9 @@
     var scene = new THREE.Scene();
     var SKY = 0x9ec9e8;
     scene.background = new THREE.Color(SKY);
-    scene.fog = new THREE.Fog(SKY, 280, 820);              // widened for WORLD=896; fades before the 1100u far plane
+    scene.fog = new THREE.Fog(SKY, 320, 1000);             // widened for WORLD=1120; fades before the 1500u far plane
 
-    var camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1100);  // far plane raised for the bigger world
+    var camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1500);  // far plane raised for the bigger world
 
     // Sky/ground-tinted ambient instead of flat AmbientLight: tops go cool, undersides
     // pick up warm ground bounce — low-poly boxes read as "outdoors".
@@ -180,7 +180,7 @@
     var SUN_D = 150;
     sun.shadow.camera.left = -SUN_D; sun.shadow.camera.right = SUN_D;
     sun.shadow.camera.top = SUN_D; sun.shadow.camera.bottom = -SUN_D;
-    sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 1100;
+    sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 1500;
     sun.shadow.camera.updateProjectionMatrix();
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.05; // kill acne on boxes
     scene.add(sun);
@@ -205,7 +205,7 @@
     } else {
       skyMat = new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthWrite: false, fog: false, color: new THREE.Color(SKY) });
     }
-    var sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 15), skyMat);  // dome encloses the bigger world
+    var sky = new THREE.Mesh(new THREE.SphereGeometry(1300, 32, 15), skyMat);  // dome encloses the bigger world
     sky.frustumCulled = false;
     scene.add(sky);
 
@@ -333,22 +333,43 @@
     trunks.castShadow = true; leaves.castShadow = true;
 
     /* ------ SF landmarks: bounded static meshes (draw-call count is O(1), not grid-scaled) ------ */
-    function buildBridge(x0, z0, x1, z1, color) {
-      var mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5, metalness: 0.3 });
-      var dx = x1 - x0, dz = z1 - z0, len = Math.hypot(dx, dz), yaw = Math.atan2(dx, dz);
-      var deck = new THREE.Mesh(new THREE.BoxGeometry(TILE * 1.4, 0.6, len), mat);
-      deck.position.set((x0 + x1) / 2, 4, (z0 + z1) / 2); deck.rotation.y = yaw;
-      deck.castShadow = true; deck.receiveShadow = true; scene.add(deck);
-      [0.28, 0.72].forEach(function (f) { var t = new THREE.Mesh(new THREE.BoxGeometry(2, 22, 2), mat);
-        t.position.set(x0 + dx * f, 11, z0 + dz * f); t.castShadow = true; scene.add(t); });
-    }
-    buildBridge(WATER_MARGIN * TILE * 0.5, 1.5 * TILE, WATER_MARGIN * TILE * 0.5, (WATER_MARGIN + 3) * TILE, 0xC0362C); // International Orange (NW)
-    buildBridge((MAP - 2) * TILE, 18 * TILE, (MAP - WATER_MARGIN) * TILE, 18 * TILE, 0x9AA3A8);                        // grey span (E)
-    // Embarcadero pier decks over the bay (visual only — the grid has no road here)
+    // Golden Gate bridge — the road tiles across the strait are the DRIVING surface; this adds
+    // the iconic International-Orange towers, main suspension cables, suspenders and railings.
+    (function buildGoldenGate() {
+      if (K.CHANNEL_Z0 == null) return;
+      var ORANGE = new THREE.MeshStandardMaterial({ color: 0xC0362C, roughness: 0.55, metalness: 0.25 });
+      var z0 = K.CHANNEL_Z0 * TILE, z1 = K.CHANNEL_Z1 * TILE;     // strait span (world z)
+      var xL = K.BRIDGE_X0 * TILE, xR = K.BRIDGE_X1 * TILE;       // road edges (world x)
+      var xC = (xL + xR) / 2, span = z1 - z0, towerH = 46;
+      // side railings down both edges of the deck
+      [xL, xR].forEach(function (xe) { var rail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, span), ORANGE);
+        rail.position.set(xe, 0.9, (z0 + z1) / 2); rail.castShadow = true; scene.add(rail); });
+      // two towers at the shores (legs flanking the road + a crossbeam near the top)
+      [z0, z1].forEach(function (tz) {
+        [xL - 1.5, xR + 1.5].forEach(function (lx) { var leg = new THREE.Mesh(new THREE.BoxGeometry(2, towerH, 2), ORANGE);
+          leg.position.set(lx, towerH / 2, tz); leg.castShadow = true; scene.add(leg); });
+        var beam = new THREE.Mesh(new THREE.BoxGeometry(xR - xL + 5, 2, 2), ORANGE);
+        beam.position.set(xC, towerH - 6, tz); beam.castShadow = true; scene.add(beam);
+      });
+      // main cables: a parabola peaking at the tower tops (t=0,1) and dipping mid-span, both sides
+      var segs = 12, topY = towerH - 3, midY = 14;
+      function cableY(t) { var u = 2 * t - 1; return midY + (topY - midY) * u * u; }
+      [xL - 1.5, xR + 1.5].forEach(function (cx) {
+        for (var i = 0; i < segs; i++) {
+          var ta = i / segs, tb = (i + 1) / segs, za = z0 + span * ta, zb = z0 + span * tb, ya = cableY(ta), yb = cableY(tb);
+          var seg = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, Math.hypot(zb - za, yb - ya)), ORANGE);
+          seg.position.set(cx, (ya + yb) / 2, (za + zb) / 2); seg.rotation.x = Math.atan2(yb - ya, zb - za); scene.add(seg);
+          var sus = new THREE.Mesh(new THREE.BoxGeometry(0.12, Math.max(0.5, ya - 0.8), 0.12), ORANGE);
+          sus.position.set(cx, ya / 2, za); scene.add(sus); // vertical suspender down to the deck
+        }
+      });
+    })();
+    // Embarcadero pier decks jutting from the SF shore into the strait (visual only)
     var pierMat = new THREE.MeshStandardMaterial({ color: 0x7a6a52, roughness: 0.9 });
+    var pierZ = (K.CHANNEL_Z1 != null) ? (K.CHANNEL_Z1 - 1.5) * TILE : (WATER_MARGIN - 1.5) * TILE;
     for (var _p = 0; _p < PIER_COLS.length; _p++) {
       var pd = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.9, 0.4, TILE * 3), pierMat);
-      pd.position.set(PIER_COLS[_p] * TILE + TILE / 2, 0.3, (WATER_MARGIN - 1.5) * TILE);
+      pd.position.set(PIER_COLS[_p] * TILE + TILE / 2, 0.3, pierZ);
       pd.receiveShadow = true; scene.add(pd);
     }
     // hero-tower caps (read heights from the engine's W._heroTowers so nothing drifts)
@@ -987,7 +1008,7 @@
       if (skyIsShader) { skyMat.uniforms.topColor.value.copy(_skyTop); skyMat.uniforms.bottomColor.value.copy(_skyBot); }
       else { skyMat.color.copy(_skyBot); }
       _fogCol.copy(_skyBot); scene.fog.color.copy(_fogCol); scene.background.copy(_skyBot);
-      scene.fog.near = 280 - wet * 90; scene.fog.far = 820 - wet * 200; // widened for WORLD=896; denser haze in the wet
+      scene.fog.near = 320 - wet * 90; scene.fog.far = 1000 - wet * 240; // widened for WORLD=1120; denser haze in the wet
       // windows glow as it gets dark
       bldgs.material.emissiveIntensity = 0.12 + (1 - day) * 1.0;
     }
