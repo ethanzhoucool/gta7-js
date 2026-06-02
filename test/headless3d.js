@@ -366,7 +366,7 @@ function run() {
     // look up a catalog item's index by label so tests survive catalog growth
     function gunIdx(label) { var items = IN.shopCatalog('gun').items; for (var i = 0; i < items.length; i++) if (items[i].label.indexOf(label) === 0 || items[i].label === label) return i; return -1; }
     var I_ARMOR = gunIdx('Body Armor'), I_DMG = gunIdx('Damage Upgrade');
-    assert.ok(EW.shops.length === 4, '4 shops placed');
+    assert.ok(EW.shops.length >= 10, 'more shops placed across the bigger map (' + EW.shops.length + ')');
     EW.shops.forEach(function (s) { assert.ok(!IN.circleHitsSolid(s.x, s.z, 0.9), 'shop ' + s.type + ' reachable (not in a wall)'); });
     // armor: buy, then a hit drains armor before hp
     EW.player.inCar = false; EW.money = 1000; EW.player.armor = 0;

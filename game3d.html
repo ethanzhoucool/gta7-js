@@ -354,31 +354,62 @@
     (function buildGoldenGate() {
       if (K.CHANNEL_Z0 == null) return;
       var ORANGE = new THREE.MeshStandardMaterial({ color: 0xC0362C, roughness: 0.55, metalness: 0.25 });
-      var z0 = K.CHANNEL_Z0 * TILE, z1 = K.CHANNEL_Z1 * TILE;     // strait span (world z)
-      var xL = K.BRIDGE_X0 * TILE, xR = K.BRIDGE_X1 * TILE;       // road edges (world x)
-      var xC = (xL + xR) / 2, span = z1 - z0, towerH = 46;
-      // side railings down both edges of the deck
-      [xL, xR].forEach(function (xe) { var rail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, span), ORANGE);
-        rail.position.set(xe, 0.9, (z0 + z1) / 2); rail.castShadow = true; scene.add(rail); });
-      // two towers at the shores (legs flanking the road + a crossbeam near the top)
+      var z0 = K.CHANNEL_Z0 * TILE, z1 = K.CHANNEL_Z1 * TILE;   // shores (world z 280..392)
+      var xL = K.BRIDGE_X0 * TILE, xR = K.BRIDGE_X1 * TILE;     // deck edges (560..588)
+      var xC = (xL + xR) / 2, span = z1 - z0;
+      var TOWER_TOP = 50, LEG_XL = xL - 3, LEG_XR = xR + 3;
+      var ggGroup = new THREE.Group(); ggGroup.frustumCulled = false;
+      function box(w, h, d, x, y, z) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), ORANGE); m.position.set(x, y, z); m.castShadow = true; ggGroup.add(m); return m; }
+      // 1. tapered Art-Deco towers: 3 stepped sections per leg + cross-braces + a top cap
+      var SECTIONS = [{ yBot: 0, yTop: 20, w: 3.2, d: 3.4 }, { yBot: 20, yTop: 38, w: 2.4, d: 2.8 }, { yBot: 38, yTop: 50, w: 1.8, d: 2.2 }];
+      function legWidthAt(y) { for (var i = 0; i < SECTIONS.length; i++) if (y >= SECTIONS[i].yBot && y <= SECTIONS[i].yTop) return SECTIONS[i].w; return 1.8; }
+      var BRACES = [{ y: 8, h: 1.4, d: 2.8 }, { y: 20, h: 1.8, d: 2.6 }, { y: 32, h: 1.4, d: 2.2 }, { y: 44, h: 1.2, d: 1.8 }];
       [z0, z1].forEach(function (tz) {
-        [xL - 1.5, xR + 1.5].forEach(function (lx) { var leg = new THREE.Mesh(new THREE.BoxGeometry(2, towerH, 2), ORANGE);
-          leg.position.set(lx, towerH / 2, tz); leg.castShadow = true; scene.add(leg); });
-        var beam = new THREE.Mesh(new THREE.BoxGeometry(xR - xL + 5, 2, 2), ORANGE);
-        beam.position.set(xC, towerH - 6, tz); beam.castShadow = true; scene.add(beam);
+        [LEG_XL, LEG_XR].forEach(function (lx) {
+          SECTIONS.forEach(function (s) { box(s.w, s.yTop - s.yBot, s.d, lx, (s.yBot + s.yTop) / 2, tz); });
+          box(legWidthAt(20) + 0.9, 0.55, 3.8, lx, 20, tz);   // step accent bands
+          box(legWidthAt(38) + 0.9, 0.55, 3.0, lx, 38, tz);
+          box(2.6, 0.9, 3.0, lx, TOWER_TOP + 0.45, tz);       // top cap
+        });
+        var braceSpan = LEG_XR - LEG_XL;
+        BRACES.forEach(function (b) { box(braceSpan - legWidthAt(b.y) + 0.3, b.h, b.d, xC, b.y, tz); });
       });
-      // main cables: a parabola peaking at the tower tops (t=0,1) and dipping mid-span, both sides
-      var segs = 12, topY = towerH - 3, midY = 14;
-      function cableY(t) { var u = 2 * t - 1; return midY + (topY - midY) * u * u; }
-      [xL - 1.5, xR + 1.5].forEach(function (cx) {
-        for (var i = 0; i < segs; i++) {
-          var ta = i / segs, tb = (i + 1) / segs, za = z0 + span * ta, zb = z0 + span * tb, ya = cableY(ta), yb = cableY(tb);
-          var seg = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, Math.hypot(zb - za, yb - ya)), ORANGE);
-          seg.position.set(cx, (ya + yb) / 2, (za + zb) / 2); seg.rotation.x = Math.atan2(yb - ya, zb - za); scene.add(seg);
-          var sus = new THREE.Mesh(new THREE.BoxGeometry(0.12, Math.max(0.5, ya - 0.8), 0.12), ORANGE);
-          sus.position.set(cx, ya / 2, za); scene.add(sus); // vertical suspender down to the deck
+      // 2. main catenary cables each side + steep back-span anchors to the shore
+      var CABLE_TOP = TOWER_TOP - 2, CABLE_MID = 9, CD = 0.32;
+      function cableY(t) { var u = 2 * t - 1; return CABLE_MID + (CABLE_TOP - CABLE_MID) * u * u; }
+      var SEGS = 22;
+      [LEG_XL, LEG_XR].forEach(function (cx) {
+        for (var i = 0; i < SEGS; i++) {
+          var za = z0 + span * (i / SEGS), zb = z0 + span * ((i + 1) / SEGS), ya = cableY(i / SEGS), yb = cableY((i + 1) / SEGS);
+          var seg = new THREE.Mesh(new THREE.BoxGeometry(CD, CD, Math.hypot(zb - za, yb - ya)), ORANGE);
+          seg.position.set(cx, (ya + yb) / 2, (za + zb) / 2); seg.rotation.x = Math.atan2(yb - ya, zb - za); seg.castShadow = true; ggGroup.add(seg);
+        }
+        [[z0, z0 - 18], [z1, z1 + 18]].forEach(function (p) {     // shore anchor back-spans
+          for (var j = 0; j < 5; j++) {
+            var za2 = p[0] + (p[1] - p[0]) * (j / 5), zb2 = p[0] + (p[1] - p[0]) * ((j + 1) / 5);
+            var ya2 = CABLE_TOP + (2.5 - CABLE_TOP) * (j / 5), yb2 = CABLE_TOP + (2.5 - CABLE_TOP) * ((j + 1) / 5);
+            var a = new THREE.Mesh(new THREE.BoxGeometry(CD, CD, Math.hypot(zb2 - za2, yb2 - ya2)), ORANGE);
+            a.position.set(cx, (ya2 + yb2) / 2, (za2 + zb2) / 2); a.rotation.x = Math.atan2(yb2 - ya2, zb2 - za2); ggGroup.add(a);
+          }
+        });
+      });
+      // 3. dense vertical suspenders (skip the tower zones)
+      [LEG_XL, LEG_XR].forEach(function (cx) {
+        for (var z = z0 + 9; z < z1 - 4; z += 9) {
+          if ((z > z0 - 8 && z < z0 + 8) || (z > z1 - 8 && z < z1 + 8)) continue;
+          var yTop = cableY((z - z0) / span), susH = Math.max(0.4, yTop - 0.35);
+          var sus = new THREE.Mesh(new THREE.BoxGeometry(0.15, susH, 0.15), ORANGE);
+          sus.position.set(cx, 0.35 + susH / 2, z); ggGroup.add(sus);
         }
       });
+      // 4. deck-edge railings + kick-plates (road tiles stay the drive surface)
+      [xL, xR].forEach(function (xe) {
+        var rail = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.9, span), ORANGE); rail.position.set(xe, 0.55, (z0 + z1) / 2); rail.castShadow = true; ggGroup.add(rail);
+        var kick = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.28, span), ORANGE); kick.position.set(xe, 0.14, (z0 + z1) / 2); ggGroup.add(kick);
+      });
+      // 5. deck cross-girders (just under the road) for side-on depth
+      for (var gz = z0; gz <= z1; gz += TILE) { var gd = new THREE.Mesh(new THREE.BoxGeometry((xR - xL) + 3, 0.45, 0.55), ORANGE); gd.position.set(xC, -0.18, gz); ggGroup.add(gd); }
+      scene.add(ggGroup);
     })();
     // Embarcadero pier decks jutting from the SF shore into the strait (visual only)
     var pierMat = new THREE.MeshStandardMaterial({ color: 0x7a6a52, roughness: 0.9 });
@@ -401,7 +432,7 @@
     /* ----------------------- Storefronts + shop interiors ----------------- */
     // Each shop gets an awning + lit sign + doorway so it reads as a real store, mounted on
     // the building beside its door. Walk up and press F to step inside (see below).
-    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9 };
+    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9, convenience: 0x6bf08a, diner: 0xffd23f, bar: 0xff6b9d };
     var storefrontGroup = new THREE.Group(); scene.add(storefrontGroup);
     (function buildStorefronts() {
       for (var s = 0; s < W.shops.length; s++) {
@@ -433,6 +464,88 @@
     // Walk-in interiors: an enclosed room (its own walls occlude the city) built at the shop's
     // spot when W.interior is set. cityHideable is toggled so the outside world doesn't show.
     var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs, storefrontGroup];
+
+    // ── SECOND PASS: architectural-detail layers (setbacks / cornices / peaks / bay windows /
+    // ground-floor plinths) — additive InstancedMesh layers, never touch the main placement loop.
+    function buildBuildingDetails() {
+      var shopTileSet = {};
+      for (var si = 0; si < W.shops.length; si++) {
+        var sh = W.shops[si];
+        shopTileSet[Math.floor((sh.bx != null ? sh.bx : sh.x) / TILE) + ',' + Math.floor((sh.bz != null ? sh.bz : sh.z) / TILE)] = true;
+      }
+      var DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      function roadFacing(tx, tz) {
+        for (var di = 0; di < 4; di++) { var nx = tx + DIRS4[di][0], nz = tz + DIRS4[di][1];
+          if (nx >= 0 && nz >= 0 && nx < MAP && nz < MAP && W.grid[nz][nx] === K.T_ROAD) return DIRS4[di]; }
+        return null;
+      }
+      var nSetback = 0, nCornice = 0, nPeak = 0, nBayWin = 0, nPlinth = 0, bx2, bz2, hgt2, facing2;
+      for (bz2 = 0; bz2 < MAP; bz2++) for (bx2 = 0; bx2 < MAP; bx2++) {
+        if (W.grid[bz2][bx2] !== K.T_BUILDING) continue;
+        hgt2 = W.buildingHeights[bz2][bx2]; nCornice++;
+        if (hgt2 >= 18) nSetback++; else if (hgt2 > 9 && hgt2 < 18 && bhash(bz2 + 2, bx2 + 5) < 0.5) nPeak++; // SAME condition as the fill pass
+        facing2 = roadFacing(bx2, bz2);
+        if (facing2) { if (hgt2 <= 12) nBayWin++; if (!shopTileSet[bx2 + ',' + bz2]) nPlinth++; }
+      }
+      nSetback = Math.max(1, nSetback); nCornice = Math.max(1, nCornice); nPeak = Math.max(1, nPeak); nBayWin = Math.max(1, nBayWin); nPlinth = Math.max(1, nPlinth);
+      var matSetback = new THREE.MeshStandardMaterial({ color: 0x7aaac8, roughness: 0.18, metalness: 0.45, transparent: true, opacity: 0.82 });
+      var matCornice = new THREE.MeshStandardMaterial({ color: 0xc8c4bc, roughness: 0.88, metalness: 0.04, vertexColors: true });
+      var matBayWin = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, metalness: 0.06, vertexColors: true });
+      var matPlinth = new THREE.MeshStandardMaterial({ color: 0x1e2028, roughness: 0.82, metalness: 0.12, vertexColors: true });
+      var imSetback = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.58, 3, TILE * 0.58), matSetback, nSetback);
+      var imCornice = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.92, 0.55, TILE * 0.92), matCornice, nCornice);
+      var imPeak = new THREE.InstancedMesh(new THREE.ConeGeometry(TILE * 0.30, 3.2, 4), matCornice, nPeak);
+      var imBayWin = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.38, 2.4, 0.80), matBayWin, nBayWin);
+      var imPlinth = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.86, 1.0, 0.25), matPlinth, nPlinth);
+      var _dm4 = new THREE.Matrix4(), _dcol = new THREE.Color();
+      var iSetback = 0, iCornice = 0, iPeak = 0, iBayWin = 0, iPlinth = 0;
+      var PASTEL = [0xEAD7C2, 0xD8E0C8, 0xCBD9E6, 0xEAD0D0, 0xE6D6B8, 0xD8CFE0, 0xCFE0DA, 0xF0E8DC];
+      var GLASS = [0x5C7A99, 0x4A7A82, 0x6E8FB0];
+      for (bz2 = 0; bz2 < MAP; bz2++) for (bx2 = 0; bx2 < MAP; bx2++) {
+        if (W.grid[bz2][bx2] !== K.T_BUILDING) continue;
+        hgt2 = W.buildingHeights[bz2][bx2];
+        var cx = bx2 * TILE + TILE / 2, cz = bz2 * TILE + TILE / 2, bh = bhash(bx2, bz2), bh2 = bhash(bz2 + 2, bx2 + 5), downtown = inDowntown(bx2, bz2);
+        if (hgt2 >= 18) {                                   // glass setback cap on towers
+          var capScale = 0.78 + bh * 0.16; _dm4.makeScale(capScale, 1, capScale); _dm4.setPosition(cx, hgt2 + 1.5, cz); imSetback.setMatrixAt(iSetback, _dm4);
+          _dcol.setHex(GLASS[(bx2 * 7 + bz2 * 13) % GLASS.length]); _dcol.r = Math.min(1, _dcol.r + 0.12); _dcol.g = Math.min(1, _dcol.g + 0.12); _dcol.b = Math.min(1, _dcol.b + 0.12);
+          imSetback.setColorAt(iSetback, _dcol); iSetback++;
+        }
+        var corniceW = 0.88 + bh * 0.10; _dm4.makeScale(corniceW, 1, corniceW); _dm4.setPosition(cx, hgt2 + 0.275, cz); imCornice.setMatrixAt(iCornice, _dm4);
+        if (downtown) _dcol.setRGB(0.86, 0.87, 0.88); else { _dcol.setHex(PASTEL[(bx2 * 3 + bz2 * 5) % PASTEL.length]); var avg = (_dcol.r + _dcol.g + _dcol.b) / 3; _dcol.r = _dcol.r * 0.5 + avg * 0.5; _dcol.g = _dcol.g * 0.5 + avg * 0.5; _dcol.b = _dcol.b * 0.5 + avg * 0.5; }
+        imCornice.setColorAt(iCornice, _dcol); iCornice++;
+        if (hgt2 > 9 && hgt2 < 18 && bh2 < 0.5) {           // peaked roof on mid-rise
+          _dm4.makeScale(1, 1, 1); _dm4.setPosition(cx, hgt2 + 1.6, cz); imPeak.setMatrixAt(iPeak, _dm4);
+          if (bh < 0.33) _dcol.setRGB(0.52, 0.45, 0.38); else if (bh < 0.66) _dcol.setRGB(0.44, 0.54, 0.42); else _dcol.setRGB(0.72, 0.68, 0.60);
+          imPeak.setColorAt(iPeak, _dcol); iPeak++;
+        }
+        facing2 = roadFacing(bx2, bz2); if (!facing2) continue;
+        var fdx = facing2[0], fdz = facing2[1];
+        var fw = 0.80 + bhash(bx2, bz2) * 0.18, fd = 0.80 + bhash(bz2 + 1, bx2 + 2) * 0.18;
+        var halfFace = TILE * 0.42 * (Math.abs(fdx) > 0.5 ? fw : fd);
+        var faceX = cx + fdx * halfFace, faceZ = cz + fdz * halfFace, faceYaw = Math.atan2(fdx, fdz);
+        if (hgt2 <= 12) {                                   // SF bay-window bump-out
+          var lat = (bhash(bx2 + 9, bz2 + 3) - 0.5) * TILE * 0.28;
+          var bwcX = faceX + (-fdz) * lat + fdx * 0.4, bwcZ = faceZ + (fdx) * lat + fdz * 0.4;
+          _dm4.makeRotationY(faceYaw); _dm4.setPosition(bwcX, hgt2 * 0.28 + 1.2, bwcZ); imBayWin.setMatrixAt(iBayWin, _dm4);
+          _dcol.setHex(PASTEL[(bx2 * 3 + bz2 * 5) % PASTEL.length]); imBayWin.setColorAt(iBayWin, _dcol); iBayWin++;
+        }
+        if (!shopTileSet[bx2 + ',' + bz2]) {                // dark ground-floor plinth band
+          _dm4.makeRotationY(faceYaw); _dm4.setPosition(faceX + fdx * 0.12, 0.5, faceZ + fdz * 0.12); imPlinth.setMatrixAt(iPlinth, _dm4);
+          var grey = 0.10 + bhash(bx2 + 20, bz2 + 40) * 0.06; _dcol.setRGB(grey, grey, grey); imPlinth.setColorAt(iPlinth, _dcol); iPlinth++;
+        }
+      }
+      // finalize: set the real draw count, and for an empty layer seed one zero-scale instance so
+      // its instanceColor buffer exists (a vertexColors material with a null instanceColor crashes).
+      function finalizeIM(im, used) {
+        if (used === 0) { _dm4.makeScale(0, 0, 0); im.setMatrixAt(0, _dm4); _dcol.setRGB(0, 0, 0); im.setColorAt(0, _dcol); used = 1; im.count = 0; }
+        else im.count = used;
+        im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true; scene.add(im); cityHideable.push(im);
+      }
+      finalizeIM(imSetback, iSetback); finalizeIM(imCornice, iCornice); finalizeIM(imPeak, iPeak);
+      finalizeIM(imBayWin, iBayWin); finalizeIM(imPlinth, iPlinth);
+    }
+    buildBuildingDetails();
     var interiorGroup = null, interiorActive = false, interiorBuiltType = null;
     function clearGroup(g) { for (var i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); }
     function showInterior(it) {
@@ -484,6 +597,170 @@
         for (var r2 = 0; r2 < 3; r2++) { var rx = -5 + r2 * 5;
           box(0.12, 0.12, 4.5, rx, 2.3, D1 + 5, new THREE.MeshStandardMaterial({ color: 0x999999 }));      // clothing rail
           for (var c2 = 0; c2 < 5; c2++) box(0.7, 1.5, 0.4, rx, 1.55, D1 + 3.2 + c2 * 0.85, new THREE.MeshStandardMaterial({ color: cols[c2] })); }
+      } else if (type === 'convenience') {
+        // --- 24/7 Convenience Mart ---
+        var cShelfMat  = new THREE.MeshStandardMaterial({ color: 0xb0a890, roughness: 0.8 });
+        var cCanA      = new THREE.MeshStandardMaterial({ color: 0xff3333, roughness: 0.6 });
+        var cCanB      = new THREE.MeshStandardMaterial({ color: 0xffcc00, roughness: 0.6 });
+        var cCanC      = new THREE.MeshStandardMaterial({ color: 0x33aaff, roughness: 0.6 });
+        var cSnack     = new THREE.MeshStandardMaterial({ color: 0xff9900, roughness: 0.7 });
+        var cCoolerMat = new THREE.MeshStandardMaterial({ color: 0x0d1f2d, roughness: 0.15, metalness: 0.5 });
+        var cGlowMat   = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.9, roughness: 0.3 });
+        var cCheckMat  = new THREE.MeshStandardMaterial({ color: 0xe8e0cc, roughness: 0.85 });
+        var cDarkMat   = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.85 });
+
+        // Checkerboard-ish floor tiles (two overlapping thin slabs — white base already exists, dark squares on top)
+        for (var tx = 0; tx < 4; tx++) for (var tz = 0; tz < 5; tz++) {
+          if ((tx + tz) % 2 === 0) box(4.2, 0.04, 2.5, -6.3 + tx * 4.2, 0.12, D1 + 1.5 + tz * 2.5, cCheckMat);
+          else                     box(4.2, 0.04, 2.5, -6.3 + tx * 4.2, 0.12, D1 + 1.5 + tz * 2.5, cDarkMat);
+        }
+
+        // Left aisle shelf unit (two shelves + uprights), x ≈ -5.5
+        box(0.2, 3.4, 7.5, -7.0, 1.7, D1 + 5.5, cShelfMat);  // left upright
+        box(0.2, 3.4, 7.5, -5.8, 1.7, D1 + 5.5, cShelfMat);  // right upright
+        box(1.4, 0.15, 7.5, -6.4, 1.0, D1 + 5.5, cShelfMat); // bottom shelf board
+        box(1.4, 0.15, 7.5, -6.4, 2.0, D1 + 5.5, cShelfMat); // mid shelf board
+        box(1.4, 0.15, 7.5, -6.4, 3.0, D1 + 5.5, cShelfMat); // top shelf board
+        // cans on left aisle shelves
+        var canMats = [cCanA, cCanB, cCanC, cSnack];
+        for (var si = 0; si < 3; si++) { var sz = D1 + 2.5 + si * 2.4;
+          for (var ci = 0; ci < 4; ci++) box(0.45, 0.55, 0.35, -6.4 + (ci - 1.5) * 0.0, 1.28 + Math.floor(ci / 2) * 1.0, sz, canMats[ci]); }
+
+        // Right aisle shelf unit, x ≈ 5.5
+        box(0.2, 3.4, 7.5,  7.0, 1.7, D1 + 5.5, cShelfMat);
+        box(0.2, 3.4, 7.5,  5.8, 1.7, D1 + 5.5, cShelfMat);
+        box(1.4, 0.15, 7.5,  6.4, 1.0, D1 + 5.5, cShelfMat);
+        box(1.4, 0.15, 7.5,  6.4, 2.0, D1 + 5.5, cShelfMat);
+        box(1.4, 0.15, 7.5,  6.4, 3.0, D1 + 5.5, cShelfMat);
+        for (var si2 = 0; si2 < 3; si2++) { var sz2 = D1 + 2.5 + si2 * 2.4;
+          for (var ci2 = 0; ci2 < 4; ci2++) box(0.45, 0.55, 0.35, 6.4, 1.28 + Math.floor(ci2 / 2) * 1.0, sz2, canMats[ci2]); }
+
+        // Glass drinks cooler on back-right wall — glowing cyan stripe
+        box(3.5, 4.0, 0.5,  6.0, 2.0, D1 + 0.55, cCoolerMat);  // cooler cabinet
+        box(3.5, 0.12, 0.5, 6.0, 1.3, D1 + 0.55, cGlowMat);    // glow shelf 1
+        box(3.5, 0.12, 0.5, 6.0, 2.4, D1 + 0.55, cGlowMat);    // glow shelf 2
+        box(3.5, 0.12, 0.5, 6.0, 3.5, D1 + 0.55, cGlowMat);    // glow shelf 3
+        // Accent glow light from cooler
+        var coolerLight = new THREE.PointLight(accent, 1.8, 10); coolerLight.position.set(6.0, 2.0, D1 + 1.5); g.add(coolerLight);
+
+        // Checkout counter (center-front of the existing back counter, add a register bump)
+        box(2.0, 0.35, 0.9, -2.5, 1.35, D1 + 1.7, new THREE.MeshStandardMaterial({ color: 0x333844, roughness: 0.5, metalness: 0.25 })); // register
+        box(0.7, 0.5, 0.55, -2.5, 1.65, D1 + 1.7, new THREE.MeshStandardMaterial({ color: 0x111316, roughness: 0.3, metalness: 0.5 }));  // screen
+
+      } else if (type === 'diner') {
+        // --- 24h Diner ---
+        var dBoothSeat = new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.7 });  // red vinyl
+        var dBoothBack = new THREE.MeshStandardMaterial({ color: 0xaa1a1a, roughness: 0.75 });
+        var dTableMat  = new THREE.MeshStandardMaterial({ color: 0xd4c9a8, roughness: 0.55, metalness: 0.1 });
+        var dChromeMat = new THREE.MeshStandardMaterial({ color: 0xbbbbbb, roughness: 0.25, metalness: 0.7 });
+        var dFloor1    = new THREE.MeshStandardMaterial({ color: 0xf5f0e8, roughness: 0.8 }); // white tile
+        var dFloor2    = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 }); // black tile
+        var dCounterMat= new THREE.MeshStandardMaterial({ color: 0x8a7460, roughness: 0.55, metalness: 0.15 });
+        var dMenuMat   = new THREE.MeshStandardMaterial({ color: 0x1a1a2a, emissive: accent, emissiveIntensity: 0.45, roughness: 0.4 });
+        var dWallMat   = new THREE.MeshStandardMaterial({ color: 0x6a5a3a, roughness: 0.9 }); // warm wood paneling
+
+        // Checkerboard floor — black+white tiles across whole room
+        for (var dtx = 0; dtx < 4; dtx++) for (var dtz = 0; dtz < 5; dtz++) {
+          var dtMat = ((dtx + dtz) % 2 === 0) ? dFloor1 : dFloor2;
+          box(4.0, 0.04, 2.5, -6.0 + dtx * 4.0, 0.12, D1 + 1.5 + dtz * 2.5, dtMat);
+        }
+
+        // Lower wall wainscoting strip (warm wood) along both sides
+        box(0.15, 1.5, (D0 - D1 - 0.5), -HW + 0.45, 0.75, (D0 + D1) / 2, dWallMat);
+        box(0.15, 1.5, (D0 - D1 - 0.5),  HW - 0.45, 0.75, (D0 + D1) / 2, dWallMat);
+
+        // Booths along the left wall (3 booths, 2-person each)
+        for (var bi = 0; bi < 3; bi++) { var bz = D1 + 3.5 + bi * 3.4;
+          // bench back (left wall side)
+          box(2.6, 1.2, 0.3, -6.0, 0.9, bz, dBoothBack);
+          // bench seat (left)
+          box(2.6, 0.35, 1.0, -6.0, 0.42, bz + 0.55, dBoothSeat);
+          // bench back (aisle side, facing back)
+          box(2.6, 1.2, 0.3, -6.0, 0.9, bz + 1.6, dBoothBack);
+          // bench seat (aisle side)
+          box(2.6, 0.35, 1.0, -6.0, 0.42, bz + 1.05, dBoothSeat);
+          // table between them
+          box(2.2, 0.1, 1.0, -6.0, 0.85, bz + 0.8, dTableMat);
+          // chrome table leg
+          box(0.08, 0.85, 0.08, -6.0, 0.42, bz + 0.8, dChromeMat);
+        }
+
+        // Counter along the right wall with stools
+        box(10.5, 1.05, 0.9, 5.2, 0.52, D1 + 6.5, dCounterMat); // counter slab
+        for (var sti = 0; sti < 5; sti++) { var sx = 1.2 + sti * 2.0;
+          // stool seat
+          box(0.75, 0.12, 0.75, sx, 1.15, D1 + 5.7, dBoothSeat);
+          // stool leg
+          box(0.1, 1.15, 0.1, sx, 0.57, D1 + 5.7, dChromeMat);
+          // stool ring (footrest)
+          box(0.6, 0.06, 0.06, sx, 0.45, D1 + 5.7, dChromeMat);
+        }
+
+        // Menu board above the back counter (glowing accent)
+        box(8.0, 1.6, 0.18, 0, 4.0, D1 + 0.45, dMenuMat);
+        // Divider strips on menu board
+        box(8.0, 0.06, 0.2, 0, 3.4, D1 + 0.45, new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.7 }));
+        box(8.0, 0.06, 0.2, 0, 4.65, D1 + 0.45, new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.7 }));
+
+        // Warm diner lights
+        var dLight1 = new THREE.PointLight(0xffe5a0, 2.2, 20); dLight1.position.set(-5.0, 3.5, D1 + 5.0); g.add(dLight1);
+        var dLight2 = new THREE.PointLight(0xffe5a0, 2.0, 18); dLight2.position.set( 4.5, 3.5, D1 + 4.0); g.add(dLight2);
+
+      } else if (type === 'bar') {
+        // --- Bar ---
+        var barTopMat   = new THREE.MeshStandardMaterial({ color: 0x3d2910, roughness: 0.35, metalness: 0.15 }); // dark wood bar top
+        var barBodyMat  = new THREE.MeshStandardMaterial({ color: 0x261b0c, roughness: 0.7 });                   // dark bar body
+        var barShelf    = new THREE.MeshStandardMaterial({ color: 0x4a3018, roughness: 0.5 });                   // back shelf wood
+        var bottleMat   = [
+          new THREE.MeshStandardMaterial({ color: 0x2a6e2a, roughness: 0.15, metalness: 0.1 }),   // green glass
+          new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.2, metalness: 0.05 }),   // brown whiskey
+          new THREE.MeshStandardMaterial({ color: 0xd4a830, roughness: 0.1, metalness: 0.2 }),    // gold spirit
+          new THREE.MeshStandardMaterial({ color: 0x1a1a3a, roughness: 0.1, metalness: 0.15 })    // dark rum
+        ];
+        var stoolMat    = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6, metalness: 0.3 });
+        var stoolSeat   = new THREE.MeshStandardMaterial({ color: 0x2a1a0a, roughness: 0.65 });   // dark leather
+        var tallTableMat= new THREE.MeshStandardMaterial({ color: 0x1e1209, roughness: 0.5, metalness: 0.1 });
+        var signMat     = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 1.1, roughness: 0.3 });
+        var darkFloor   = new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 0.9 });     // dark hardwood floor
+
+        // Dark hardwood floor overlay
+        box(HW * 2 - 0.5, 0.04, (D0 - D1) - 0.5, 0, 0.12, (D0 + D1) / 2, darkFloor);
+
+        // Long bar counter left of center, running front-to-back
+        box(3.0, 1.15, 10.5, -5.0, 0.57, D1 + 6.5, barBodyMat);   // bar body
+        box(3.4, 0.14, 10.9, -5.0, 1.15, D1 + 6.5, barTopMat);    // bar top overhang (slightly wider)
+
+        // Bar stools along bar (right/aisle side)
+        for (var bsi = 0; bsi < 5; bsi++) { var bsz = D1 + 2.5 + bsi * 1.9;
+          box(0.65, 0.08, 0.65, -3.2, 1.35, bsz, stoolSeat);         // seat
+          box(0.07, 1.35, 0.07, -3.2, 0.67, bsz, stoolMat);          // center pole
+          box(0.55, 0.05, 0.05, -3.2, 0.4,  bsz, stoolMat);          // footrest ring
+        }
+
+        // Back-wall bottle shelf (3 horizontal shelves, spanning full back wall width)
+        box(14.0, 0.12, 0.35, 0, 1.6, D1 + 0.42, barShelf);  // shelf 1
+        box(14.0, 0.12, 0.35, 0, 2.6, D1 + 0.42, barShelf);  // shelf 2
+        box(14.0, 0.12, 0.35, 0, 3.6, D1 + 0.42, barShelf);  // shelf 3
+        // Shelf vertical supports
+        for (var svi = 0; svi < 5; svi++) { var svx = -6.5 + svi * 3.25;
+          box(0.1, 2.3, 0.3, svx, 2.6, D1 + 0.42, barShelf); }
+        // Bottles on each shelf
+        for (var row = 0; row < 3; row++) { var by = 1.6 + row * 1.0 + 0.22;
+          for (var bc = 0; bc < 9; bc++) box(0.35, 0.8, 0.25, -6.0 + bc * 1.5, by, D1 + 0.5, bottleMat[bc % 4]); }
+
+        // Neon sign above back shelf — emissive bar name strip
+        box(9.5, 0.55, 0.12, 0, 4.5, D1 + 0.38, signMat);
+        // Neon glow light
+        var neonLight = new THREE.PointLight(accent, 2.5, 14); neonLight.position.set(0, 4.0, D1 + 1.0); g.add(neonLight);
+
+        // Two tall cocktail tables on the right side of the room
+        for (var tti = 0; tti < 2; tti++) { var ttx = 4.5, ttz = D1 + 4.5 + tti * 4.5;
+          box(1.4, 0.1, 1.4, ttx, 2.2, ttz, tallTableMat);   // table top
+          box(0.1, 2.2, 0.1, ttx, 1.1, ttz, stoolMat);       // table pole
+        }
+
+        // Mood ambient light — dim warm, low
+        var moodLight = new THREE.PointLight(0xff9944, 1.4, 22); moodLight.position.set(2.0, 2.8, D1 + 7.0); g.add(moodLight);
       } else {
         box(3.4, 1.0, 1.7, 0, 0.5, D1 + 6, new THREE.MeshStandardMaterial({ color: 0x3a2f4a, roughness: 0.7 }));  // realty desk
       }

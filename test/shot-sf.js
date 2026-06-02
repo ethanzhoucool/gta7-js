@@ -78,6 +78,15 @@ var DIR = path.resolve(__dirname, '..');
     W.player.inCar = false; W.player.x = px; W.player.z = pz; W.player.y = 0;
     if (window.__setCam) window.__setCam(Math.atan2(gun.bx - px, gun.bz - pz), 0.12); // look diagonally at the facade + sign
   });
+  // 8) INSIDE a diner — should read as a diner (booths, counter+stools, menu board)
+  var dn = await shot('shot-sf-diner.png', function (W, K, TILE) {
+    var IN = window.__ENG._internal, s = null;
+    for (var i = 0; i < W.shops.length; i++) if (W.shops[i].type === 'diner') s = W.shops[i];
+    W.player.inCar = false; W.player.x = s.x; W.player.z = s.z; W.player.y = 0;
+    IN.enterShop(s);
+    if (window.__setCam) window.__setCam(Math.PI, 0.05);
+  });
+  await page.evaluate(function () { var IN = window.__ENG._internal; if (window.__ENG.world.interior) IN.exitShop(); });
   // 5) INSIDE the gun shop — should read as a gun shop (counter, wall gun racks)
   var e = await shot('shot-sf-gunshop.png', function (W, K, TILE) {
     var IN = window.__ENG._internal, gun = null;

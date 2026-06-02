@@ -259,6 +259,7 @@
       return { x: x, y: 0, z: z, vx: 0, vz: 0, vy: 0, yaw: 0, aimYaw: 0, onGround: true,
         coyote: 0, jumpBuffer: 0, hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, inCar: false, aiming: false, moving: false, name: 'Jay',
         armor: 0, ammo: 999999, gunDmgMul: 1, fireRateMul: 1,         // economy upgrades
+        barBuff: 0,                                                    // temp bar-drink dmg buff (0–3, decays); separate from gunDmgMul
         weapons: { pistol: true }, weapon: 'pistol' };                 // owned guns + current
     }
     function makeCar(x, z, driver) {
@@ -348,13 +349,35 @@
       realty: { name: 'Dynasty 8 Real Estate', items: [] }, // filled from PROPERTY_DEFS at reset
       style: { name: 'Binco & Barber', items: [
         { label: 'New Outfit (shed heat)', price: 200, apply: function () { if (W.wanted > 0 && !W.seen) { W.wanted = Math.max(0, W.wanted - 1); W.lkpValid = false; W.searchTimer = 0; } } }
+      ]},
+      convenience: { name: '24/7 Mart', items: [
+        { label: 'Energy Drink (+15 HP)', price: 35, apply: function () { W.player.hp = Math.min(W.player.maxHp, W.player.hp + 15); } },
+        { label: 'Protein Bar (+25 HP)', price: 50, apply: function () { W.player.hp = Math.min(W.player.maxHp, W.player.hp + 25); } },
+        { label: 'Body Armor (+50)', price: 180, apply: function () { W.player.armor = Math.min(W.armorMax || 100, W.player.armor + 50); } },
+        { label: 'Medkit (full HP)', price: 300, apply: function () { W.player.hp = W.player.maxHp; } }
+      ]},
+      diner: { name: 'Cluckin Diner', items: [
+        { label: 'Fries (+10 HP)', price: 18, apply: function () { W.player.hp = Math.min(W.player.maxHp, W.player.hp + 10); } },
+        { label: 'Burger Combo (+35 HP)', price: 55, apply: function () { W.player.hp = Math.min(W.player.maxHp, W.player.hp + 35); } },
+        { label: 'Big Feast (full HP)', price: 110, apply: function () { W.player.hp = W.player.maxHp; } }
+      ]},
+      bar: { name: 'The Tipsy Gull', items: [
+        // a drink stacks a TEMPORARY damage buff (separate from the permanent gun upgrade) that decays
+        { label: 'Cold Beer (liquid courage)', price: 40, apply: function () { W.player.barBuff = Math.min(3, (W.player.barBuff || 0) + 1.0); } },
+        { label: 'Top-Shelf Whiskey', price: 95, apply: function () { W.player.barBuff = Math.min(3, (W.player.barBuff || 0) + 2.0); } }
       ]}
     };
-    var SHOP_DEFS = [ // tx,tz on road lanes (col%5<2 or row%5<2) so the door is reachable
+    var SHOP_DEFS = [ // tx,tz near road lanes; spread across SF (z>=28) and Marin (z<20)
       { type: 'gun',    tx: 12, tz: 34 },  // SF west
       { type: 'car',    tx: 66, tz: 32 },  // SF near downtown
       { type: 'realty', tx: 16, tz: 68 },  // SF SW
-      { type: 'style',  tx: 66, tz: 68 }   // SF SE
+      { type: 'style',  tx: 66, tz: 68 },  // SF SE
+      { type: 'convenience', tx: 32, tz: 50 }, // SF central
+      { type: 'convenience', tx: 54, tz: 16 }, // Marin (across the bridge)
+      { type: 'diner',  tx: 24, tz: 44 },  // SF west-central
+      { type: 'diner',  tx: 58, tz: 50 },  // SF mid
+      { type: 'bar',    tx: 38, tz: 62 },  // SF Mission
+      { type: 'bar',    tx: 46, tz: 14 }   // Marin
     ];
 
     function snapToRoad(tx, tz) {
@@ -1221,7 +1244,9 @@
       var cp = Math.cos(pitch), sp = Math.sin(pitch);
       var oy = 1.1; // torso / car-body height — matches the y-band hit tests below
       var ox = p.x, oz = p.z;
-      var dmg = wd.dmg * (p.gunDmgMul || 1);
+      // barBuff is read here as a SEPARATE factor (NOT written into gunDmgMul, which is a
+      // permanent purchase snapshotted by rampage) — temp +25% dmg per drink level.
+      var dmg = wd.dmg * (p.gunDmgMul || 1) * (1 + Math.floor(p.barBuff || 0) * 0.25);
       // single-pellet weapons fire dead-center (exact yaw); shotgun sprays pellets
       for (var s = 0; s < wd.pellets; s++) {
         var j = (wd.pellets === 1) ? 0 : rand(-wd.spread, wd.spread);
@@ -1438,6 +1463,7 @@
       if (W.fireCd > 0) W.fireCd -= dt;
       if (W.disguiseCd > 0) W.disguiseCd -= dt;
       if (W.flash > 0) W.flash = Math.max(0, W.flash - dt);
+      if (W.player.barBuff > 0) W.player.barBuff = Math.max(0, W.player.barBuff - dt / 22); // bar buff fades over ~22s/level
       for (var i = 0; i < W.peds.length; i++) if (W.peds[i].robbedCd > 0) W.peds[i].robbedCd -= dt;
 
       // INSIDE a shop: the city sim is paused. Only the buy menu + walking the room run.
