@@ -1073,10 +1073,12 @@
         }
         var vx = fxp * p.speed + rxp * nudge * PED_WALK * 0.5;
         var vz = fzp * p.speed + rzp * nudge * PED_WALK * 0.5;
-        var b = p.x + p.z;
+        var prevX = p.x, prevZ = p.z;
         moveCircle(p, p.x + vx * dt, p.z + vz * dt, PLAYER_RADIUS);
-        // blocked by a wall/curb: turn 90° to follow the street rather than spinning randomly
-        if (Math.abs((p.x + p.z) - b) < 0.001 && p.panic <= 0 && !p.hostile) p.dir = snapCardinal(p.dir) + (Math.random() < 0.5 ? HALF_PI : -HALF_PI);
+        // turn 90° when FORWARD progress is blocked (measure forward only, so the sideways
+        // curb-nudge doesn't mask a wall ahead and leave the ped scraping along it).
+        var movedF = (p.x - prevX) * fxp + (p.z - prevZ) * fzp;
+        if (movedF < p.speed * dt * 0.35 && p.panic <= 0 && !p.hostile) p.dir = snapCardinal(p.dir) + (Math.random() < 0.5 ? HALF_PI : -HALF_PI);
       }
       return true;
     }

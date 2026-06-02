@@ -406,20 +406,26 @@
     (function buildStorefronts() {
       for (var s = 0; s < W.shops.length; s++) {
         var sh = W.shops[s], acc = SHOP_ACCENT[sh.type] || 0xffd23f;
-        // anchor the facade to the building's road-facing edge (engine gives bx/bz + dir)
         var dx = (sh.dirx || 0), dz = (sh.dirz != null ? sh.dirz : -1);
         var bx = (sh.bx != null ? sh.bx : sh.x), bz = (sh.bz != null ? sh.bz : sh.z);
-        var fx = bx + dx * TILE * 0.5, fz = bz + dz * TILE * 0.5, yaw = Math.atan2(dx, dz);
+        // The building uses a varied per-instance footprint (must MATCH the building loop's
+        // bhash scales). Sit the facade flush on the actual scaled wall — not the tile edge —
+        // so it never floats off a smaller building. fw=X scale, fd=Z scale.
+        var tx = Math.floor(bx / TILE), tz = Math.floor(bz / TILE);
+        var fw = 0.80 + bhash(tx, tz) * 0.18, fd = 0.80 + bhash(tz + 1, tx + 2) * 0.18;
+        var halfFace = TILE * 0.42 * (Math.abs(dx) > 0.5 ? fw : fd);   // half-depth toward the road
+        var sw = TILE * 0.84 * (Math.abs(dx) > 0.5 ? fd : fw);          // building width across the facade
+        var fx = bx + dx * halfFace, fz = bz + dz * halfFace, yaw = Math.atan2(dx, dz);
         var g = new THREE.Group(); g.position.set(fx, 0, fz); g.rotation.y = yaw;
-        // a bright ground-floor shopfront panel set into the building face (glass + frame)
-        var front = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.92, 3.4, 0.3), new THREE.MeshStandardMaterial({ color: 0x101319, emissive: acc, emissiveIntensity: 0.16, roughness: 0.4, metalness: 0.3 }));
-        front.position.set(0, 1.7, 0.18); g.add(front);
-        var awn = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.96, 0.4, 2.2), new THREE.MeshStandardMaterial({ color: acc, roughness: 0.7 }));
+        // a bright ground-floor shopfront panel flush with the building face (glass + frame)
+        var front = new THREE.Mesh(new THREE.BoxGeometry(sw, 3.4, 0.3), new THREE.MeshStandardMaterial({ color: 0x101319, emissive: acc, emissiveIntensity: 0.16, roughness: 0.4, metalness: 0.3 }));
+        front.position.set(0, 1.7, 0.16); g.add(front);
+        var awn = new THREE.Mesh(new THREE.BoxGeometry(sw * 1.02, 0.4, 2.2), new THREE.MeshStandardMaterial({ color: acc, roughness: 0.7 }));
         awn.position.set(0, 3.4, 1.2); awn.rotation.x = -0.34; awn.castShadow = true; g.add(awn);
-        var sign = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.8, 1.0, 0.3), new THREE.MeshStandardMaterial({ color: acc, emissive: acc, emissiveIntensity: 0.55 }));
-        sign.position.set(0, 4.5, 0.3); g.add(sign);
-        var door = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.0, 0.25), new THREE.MeshStandardMaterial({ color: 0x05070b, emissive: acc, emissiveIntensity: 0.3 }));
-        door.position.set(0, 1.5, 0.32); g.add(door);
+        var sign = new THREE.Mesh(new THREE.BoxGeometry(sw * 0.86, 1.0, 0.3), new THREE.MeshStandardMaterial({ color: acc, emissive: acc, emissiveIntensity: 0.55 }));
+        sign.position.set(0, 4.5, 0.28); g.add(sign);
+        var door = new THREE.Mesh(new THREE.BoxGeometry(Math.min(2.2, sw * 0.45), 3.0, 0.25), new THREE.MeshStandardMaterial({ color: 0x05070b, emissive: acc, emissiveIntensity: 0.3 }));
+        door.position.set(0, 1.5, 0.3); g.add(door);
         storefrontGroup.add(g);
       }
     })();
