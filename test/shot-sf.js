@@ -63,6 +63,13 @@ var DIR = path.resolve(__dirname, '..');
     W.player.inCar = false; W.player.x = 16 * TILE + 7; W.player.z = 56 * TILE + 7; W.player.y = 0; // SF SW grid
     if (window.__setCam) window.__setCam(Math.PI * 0.5, -0.12); // look east down the street, slightly down
   });
+  // 7) player walking (hold forward so rAF keeps animating) — check the gait isn't contorted
+  var w = await shot('shot-sf-walk.png', function (W, K, TILE) {
+    W.player.inCar = false; W.player.x = 574; W.player.z = 470; W.player.y = 0;
+    window.__probe().keys['KeyW'] = true;          // hold forward through the rAF wait
+    if (window.__setCam) window.__setCam(0, -0.06); // walk south, camera behind
+  });
+  await page.evaluate(function () { window.__probe().keys['KeyW'] = false; }); // release
   // 6) a storefront from across the street — the shop should be built INTO a building, not floating
   var f = await shot('shot-sf-storefront.png', function (W, K, TILE) {
     var gun = null; for (var i = 0; i < W.shops.length; i++) if (W.shops[i].type === 'gun') gun = W.shops[i];

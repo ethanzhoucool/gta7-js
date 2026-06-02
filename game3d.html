@@ -636,6 +636,11 @@
     var justJ = false, justQ = false, weaponSlot = -1; // job / weapon-cycle / weapon-slot edges
     var mouseDown = false, rmbDown = false, locked = false;
     var camYaw = 0, camPitch = -0.18;   // look pitch: + up, − down. default slightly down (3/4 view)
+    // smoothing state for the better third-person feel (position springs, look-ahead, FOV, etc.)
+    var smoothYaw = 0, smoothPitch = -0.18;   // display orientation chases raw camYaw/camPitch (~50ms)
+    var leadX = 0, leadZ = 0;                  // velocity look-ahead offset (eased)
+    var curFOV = 60, camDist = 9;              // smoothed FOV + collision distance (eases back out)
+    var playerVisYaw = 0;                      // body facing eases toward p.yaw (no snap)
     window.__setCam = function (y, p) { camYaw = y; camPitch = p; }; // test hook: aim the camera for screenshots
     var MOUSE_SENS = 0.0024, AIM_SENS = 0.0013;   // finer sensitivity while aiming (ADS)
     document.addEventListener('keydown', function (e) {
@@ -789,27 +794,49 @@
         useYaw = camYaw;
       }
       var aiming = !p.inCar && !!p.aiming;
-      // Camera POSITION: behind the player (horizontal) at a steady height — INDEPENDENT of
-      // pitch, so looking up is never flattened by a ground clamp. clearCamDist pulls it in
-      // past walls. Camera ORIENTATION is set straight from (yaw,pitch) so the screen-center
-      // aim ray EXACTLY equals the look direction — you can put the reticle on a chopper above.
-      var baseDist = W.interior ? 5 : (p.inCar ? 13 : (aiming ? 6.5 : 9));
-      var dist = clearCamDist(p.x, p.z, useYaw, baseDist);
+      var first = !camInit; camInit = true;
+      // --- velocity look-ahead: lead the camera toward where you're moving/heading ---
+      var rawVx = (p.inCar && W.playerCar) ? (W.playerCar.vx || 0) : (p.vx || 0);
+      var rawVz = (p.inCar && W.playerCar) ? (W.playerCar.vz || 0) : (p.vz || 0);
+      var vLen = Math.hypot(rawVx, rawVz), topSpd = p.inCar ? 46 : 12.5, maxLead = aiming ? 0 : (p.inCar ? 7 : 2);
+      var leadAmt = vLen > 0.5 ? Math.min(vLen / topSpd, 1) * maxLead : 0;
+      var kLead = first ? 1 : (1 - Math.exp(-4 * dt));
+      leadX += ((vLen > 0.5 ? rawVx / vLen * leadAmt : 0) - leadX) * kLead;
+      leadZ += ((vLen > 0.5 ? rawVz / vLen * leadAmt : 0) - leadZ) * kLead;
+      var pivX = p.x + leadX, pivZ = p.z + leadZ;
+      // --- collision distance: pull in INSTANTLY past walls, ease back out at 6 u/s ---
+      var wantDist = W.interior ? 5 : (p.inCar ? 13 : (aiming ? 6.5 : 9));
+      var maxPull = clearCamDist(pivX, pivZ, useYaw, wantDist);
+      camDist = Math.min(camDist, maxPull);                       // snap in
+      camDist = Math.min(wantDist, camDist + (first ? 999 : 6 * dt)); // ease out
+      var dist = camDist;
       var rx = Math.cos(useYaw), rz = -Math.sin(useYaw);          // camera-right vector
       var shoulder = aiming ? 1.5 : 0.7;                          // slight over-the-shoulder offset
       var camHeight = W.interior ? 3.6 : (p.inCar ? 6 : (aiming ? 4.5 : 5.6));
-      var desX = p.x - Math.sin(useYaw) * dist + rx * shoulder;
-      var desZ = p.z - Math.cos(useYaw) * dist + rz * shoulder;
-      var desY = (p.y || 0) + camHeight;
-      // damped follow on POSITION (snappy but jitter-free); snap on the very first frame
-      var k = camInit ? (1 - Math.exp(-14 * dt)) : 1; camInit = true;
-      camera.position.x += (desX - camera.position.x) * k;
-      camera.position.y += (desY - camera.position.y) * k;
-      camera.position.z += (desZ - camera.position.z) * k;
-      // orientation: aim FAR along the (yaw,pitch) dir from the smoothed camera position, so
-      // camera-forward == the firing direction. Instant (no lag) for responsive aiming.
-      var cosP = Math.cos(camPitch), sinP = Math.sin(camPitch);
-      var fwdX = Math.sin(useYaw) * cosP, fwdY = sinP, fwdZ = Math.cos(useYaw) * cosP;
+      var desX = pivX - Math.sin(useYaw) * dist + rx * shoulder;
+      var desZ = pivZ - Math.cos(useYaw) * dist + rz * shoulder;
+      // keep the player in frame at jump apex instead of letting them climb up the screen
+      var jumpBoost = (!p.inCar && (p.vy || 0) > 0.5) ? Math.min(p.vy, 6) * 0.35 : 0;
+      var desY = (p.y || 0) + camHeight + jumpBoost;
+      // --- position springs: snappy horizontal, slower vertical (so jumps/stairs don't jerk) ---
+      var kXZ = first ? 1 : (1 - Math.exp(-25 * dt));
+      var kY = first ? 1 : (1 - Math.exp((desY > camera.position.y ? -9 : -6) * dt)); // catch the apex, settle gently
+      if (Math.abs(desY - camera.position.y) > 18) camera.position.y = desY; // teleport/respawn snap
+      camera.position.x += (desX - camera.position.x) * kXZ;
+      camera.position.z += (desZ - camera.position.z) * kXZ;
+      camera.position.y += (desY - camera.position.y) * kY;
+      // --- FOV: widen with car speed (sense of motion); tighten for ADS; smoothed ---
+      var speedNorm = (p.inCar && W.playerCar) ? Math.abs(W.playerCar.speed) / 46 : 0;
+      var tFOV = aiming ? 46 : (p.inCar ? 62 + speedNorm * 13 : 60);
+      curFOV += (tFOV - curFOV) * (first ? 1 : (1 - Math.exp((aiming ? -8 : -3) * dt)));
+      camera.fov = clamp(curFOV, 40, 75); camera.updateProjectionMatrix();
+      // --- orientation: chase raw (camYaw,camPitch) with a ~50ms spring (imperceptible lag,
+      // kills mouse-jitter) so the lookAt is smooth while input/aim stays responsive ---
+      var kLook = first ? 1 : (1 - Math.exp(-20 * dt));
+      var yawD = ((useYaw - smoothYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      smoothYaw += yawD * kLook; smoothPitch += (camPitch - smoothPitch) * kLook;
+      var cosP = Math.cos(smoothPitch), sinP = Math.sin(smoothPitch);
+      var fwdX = Math.sin(smoothYaw) * cosP, fwdY = sinP, fwdZ = Math.cos(smoothYaw) * cosP;
       camTarget.set(camera.position.x + fwdX * 60, camera.position.y + fwdY * 60, camera.position.z + fwdZ * 60);
       // screen shake (Eiserloh trauma model): shake = trauma^2, decays each frame.
       // W.trauma is bumped by the engine's fx() on impacts/kills/explosions.
@@ -889,20 +916,64 @@
     function stepWalk(m, x, z, dt) {
       var dx = x - (m._lx == null ? x : m._lx), dz = z - (m._lz == null ? z : m._lz);
       m._lx = x; m._lz = z;
-      var spd = dt > 0 ? Math.min(Math.hypot(dx, dz) / dt, 9) : 0;
-      m._phase += dt * (5 + spd * 1.6);
-      var sw = Math.min(spd * 0.16, 0.85), s = Math.sin(m._phase);
-      m._legL.rotation.x = s * sw; m._legR.rotation.x = -s * sw;
-      m._armL.rotation.x = -s * sw * 0.7; m._armR.rotation.x = s * sw * 0.7;
-      return Math.abs(Math.sin(m._phase)) * 0.05 * Math.min(spd, 3);
+      var spd = dt > 0 ? Math.min(Math.hypot(dx, dz) / dt, 13) : 0;
+      m._spd = spd;
+      var t = Math.min(spd / 12.5, 1), moveBlend = Math.min(spd / 1.2, 1);  // 0 still → 1 run; fade gait in
+      // stride-LOCKED cadence: footstep frequency tied to ground speed, so feet don't slide
+      var strideLen = spd <= 7.5 ? 1.4 : 1.9;
+      m._phase += Math.min(Math.PI * spd / Math.max(strideLen, 0.01), 25) * dt;
+      var s = Math.sin(m._phase), hipAmp = (0.55 + 0.30 * t) * moveBlend, armAmp = hipAmp * 0.65;
+      m._legL.rotation.x = s * hipAmp; m._legR.rotation.x = -s * hipAmp;
+      m._armL.rotation.x = -s * armAmp; m._armR.rotation.x = s * armAmp;
+      // knee + elbow bend (half-rectified, trails the thigh) — readable gait, not a stiff puppet
+      var kneeBend = Math.min(0.35 + 0.15 * t, 0.48) * moveBlend, elbBend = Math.min(0.20 + 0.13 * t, 0.33) * moveBlend;
+      if (m._legL.children.length > 1) {
+        var sKL = Math.sin(m._phase + 0.5), sKR = Math.sin(m._phase + 0.5 + Math.PI);
+        m._legL.children[1].rotation.x = -Math.max(0, -sKL) * kneeBend;
+        m._legR.children[1].rotation.x = -Math.max(0, -sKR) * kneeBend;
+      }
+      if (m._armL.children.length > 1) {
+        m._armL.children[1].rotation.x = -Math.max(0, s) * elbBend;
+        m._armR.children[1].rotation.x = -Math.max(0, -s) * elbBend;
+      }
+      // footfall bob (two dips per stride) + a breathing/weight-shift idle when nearly still
+      var bob = (0.04 + 0.05 * t) * 0.5 * (1 - Math.cos(2 * m._phase)) * moveBlend;
+      var idle = Math.max(0, 1 - spd / 1.2);
+      if (idle > 0) { m._idleT = (m._idleT || 0) + dt;
+        bob += Math.sin(m._idleT * 1.57) * 0.008 * idle;
+        var sway = Math.sin(m._idleT * 2.2) * 0.05 * idle;
+        m._armL.rotation.x += sway; m._armR.rotation.x -= sway;
+      }
+      return bob;
     }
 
     function sync(dt) {
       var p = W.player;
       // player visible only on foot
       playerG.visible = !p.inCar;
-      if (!p.inCar) { var pb = stepWalk(playerG, p.x, p.z, dt); playerG.position.set(p.x, (p.y || 0) + pb, p.z); playerG.rotation.y = p.yaw; }
-      else { playerG._lx = null; playerG._lz = null; }
+      if (!p.inCar) {
+        var pb = stepWalk(playerG, p.x, p.z, dt);
+        // teleport/respawn: snap facing + clear motion history so the body doesn't spin or lurch
+        if (playerG._lpx != null && Math.hypot(p.x - playerG._lpx, p.z - playerG._lpz) > 20) {
+          playerVisYaw = p.yaw; playerG._lvx = playerG._lvz = 0; playerG._lpx = p.x; playerG._lpz = p.z;
+        }
+        // smooth body facing toward p.yaw (no instant snap); turn faster at speed, slower when aiming
+        var turnRate = p.aiming ? 6 : (8 + 4 * Math.min((playerG._spd || 0) / 12.5, 1));
+        playerVisYaw = lerpAngle(playerVisYaw, p.yaw, 1 - Math.exp(-turnRate * dt));
+        // lean into acceleration (torso pitch) and into turns (torso roll), eased
+        var idt = Math.max(dt, 1e-3);
+        var vx = (p.x - (playerG._lpx == null ? p.x : playerG._lpx)) / idt, vz = (p.z - (playerG._lpz == null ? p.z : playerG._lpz)) / idt;
+        var ax = (vx - (playerG._lvx || 0)) / idt, az = (vz - (playerG._lvz || 0)) / idt;
+        playerG._lpx = p.x; playerG._lpz = p.z; playerG._lvx = vx; playerG._lvz = vz;
+        var sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
+        var fwdA = ax * sy + az * cy, latA = ax * cy - az * sy;
+        var kl = 1 - Math.exp(-8 * dt);
+        playerG._leanP = (playerG._leanP || 0) + (clamp(fwdA * 0.012, -0.16, 0.10) - (playerG._leanP || 0)) * kl;
+        playerG._leanR = (playerG._leanR || 0) + (clamp(-latA * 0.018, -0.13, 0.13) - (playerG._leanR || 0)) * kl;
+        playerG.rotation.order = 'YXZ';
+        playerG.position.set(p.x, (p.y || 0) + pb, p.z);
+        playerG.rotation.set(playerG._leanP, playerVisYaw, playerG._leanR);
+      } else { playerG._lx = playerG._lz = null; playerG._lpx = playerG._lpz = null; playerG._lvx = playerG._lvz = 0; playerVisYaw = p.yaw; }
 
       // shop interior: render the enclosed room, hide the city + every street entity
       if (W.interior && !interiorActive) showInterior(W.interior);
