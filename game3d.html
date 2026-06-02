@@ -299,6 +299,9 @@
     // grass (0.84) sit inset on top, so a curb border shows between them and the road.
     var sidewalks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.24, TILE),
       new THREE.MeshStandardMaterial({ color: 0xb8b4ab, roughness: 0.95, metalness: 0.0 }), nBuild + nPark);
+    // rooftop detail (water tank / AC unit) on each building — breaks up the flat-box skyline
+    var roofs = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.34, 1.3, TILE * 0.34),
+      new THREE.MeshStandardMaterial({ color: 0x6b6e75, roughness: 0.9, metalness: 0.1 }), nBuild);
     sidewalks.receiveShadow = true;
 
     var _bcol = new THREE.Color();
@@ -322,18 +325,24 @@
       } else {
         m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);   // curb pad the building rises from
         var hgt = W.buildingHeights[z][x];
-        m4.makeScale(1, hgt, 1); m4.setPosition(cx, hgt / 2, cz);
+        // varied footprint (different widths/depths + setback) so the row isn't identical boxes
+        var fw = 0.80 + bhash(x, z) * 0.18, fd = 0.80 + bhash(z + 1, x + 2) * 0.18;
+        m4.makeScale(fw, hgt, fd); m4.setPosition(cx, hgt / 2, cz);
         bldgs.setMatrixAt(bi, m4);
         // SF tint: glass downtown, pastel everywhere else (deterministic, no two neighbours equal)
         if (inDowntown(x, z)) _bcol.setHex(GLASS[(x * 7 + z * 13) % GLASS.length]);
         else _bcol.setHex(PASTEL[(x * 3 + z * 5) % PASTEL.length]);
         bldgs.setColorAt(bi, _bcol);
+        // a rooftop unit, nudged off-center, to clutter the skyline
+        var rs = 0.55 + bhash(x + 5, z + 7) * 0.5;
+        m4.makeScale(rs, 1, rs); m4.setPosition(cx + (bhash(x, z) - 0.5) * 3, hgt + 0.65, cz + (bhash(z, x) - 0.5) * 3);
+        roofs.setMatrixAt(bi, m4);
         bi++;
       }
     }
     // frustumCulled=false: InstancedMesh derives its bounds from the base geometry
     // at the origin, so without this the whole city vanishes when you look away.
-    [roads, parks, bldgs, trunks, leaves, water, sidewalks].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
+    [roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
     if (bldgs.instanceColor) bldgs.instanceColor.needsUpdate = true;
     roads.receiveShadow = true; parks.receiveShadow = true;
     bldgs.castShadow = true; bldgs.receiveShadow = true;
@@ -395,28 +404,29 @@
     var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9 };
     var storefrontGroup = new THREE.Group(); scene.add(storefrontGroup);
     (function buildStorefronts() {
-      var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
       for (var s = 0; s < W.shops.length; s++) {
         var sh = W.shops[s], acc = SHOP_ACCENT[sh.type] || 0xffd23f;
-        var stx = Math.floor(sh.x / TILE), stz = Math.floor(sh.z / TILE), bdir = null;
-        for (var di = 0; di < 4; di++) { var nx = stx + dirs[di][0], nz = stz + dirs[di][1];
-          if (W.grid[nz] && W.grid[nz][nx] === K.T_BUILDING) { bdir = dirs[di]; break; } }
-        if (!bdir) bdir = [0, -1];
-        var fx = sh.x + bdir[0] * TILE * 0.5, fz = sh.z + bdir[1] * TILE * 0.5, yaw = Math.atan2(-bdir[0], -bdir[1]);
+        // anchor the facade to the building's road-facing edge (engine gives bx/bz + dir)
+        var dx = (sh.dirx || 0), dz = (sh.dirz != null ? sh.dirz : -1);
+        var bx = (sh.bx != null ? sh.bx : sh.x), bz = (sh.bz != null ? sh.bz : sh.z);
+        var fx = bx + dx * TILE * 0.5, fz = bz + dz * TILE * 0.5, yaw = Math.atan2(dx, dz);
         var g = new THREE.Group(); g.position.set(fx, 0, fz); g.rotation.y = yaw;
-        var awn = new THREE.Mesh(new THREE.BoxGeometry(7, 0.4, 2.4), new THREE.MeshStandardMaterial({ color: acc, roughness: 0.7 }));
-        awn.position.set(0, 3.0, 1.3); awn.rotation.x = -0.32; awn.castShadow = true; g.add(awn);
-        var sign = new THREE.Mesh(new THREE.BoxGeometry(6, 1.1, 0.3), new THREE.MeshStandardMaterial({ color: acc, emissive: acc, emissiveIntensity: 0.5 }));
-        sign.position.set(0, 4.3, 0.25); g.add(sign);
-        var door = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.2, 0.2), new THREE.MeshStandardMaterial({ color: 0x0d0f14, emissive: acc, emissiveIntensity: 0.22 }));
-        door.position.set(0, 1.6, 0.15); g.add(door);
+        // a bright ground-floor shopfront panel set into the building face (glass + frame)
+        var front = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.92, 3.4, 0.3), new THREE.MeshStandardMaterial({ color: 0x101319, emissive: acc, emissiveIntensity: 0.16, roughness: 0.4, metalness: 0.3 }));
+        front.position.set(0, 1.7, 0.18); g.add(front);
+        var awn = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.96, 0.4, 2.2), new THREE.MeshStandardMaterial({ color: acc, roughness: 0.7 }));
+        awn.position.set(0, 3.4, 1.2); awn.rotation.x = -0.34; awn.castShadow = true; g.add(awn);
+        var sign = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.8, 1.0, 0.3), new THREE.MeshStandardMaterial({ color: acc, emissive: acc, emissiveIntensity: 0.55 }));
+        sign.position.set(0, 4.5, 0.3); g.add(sign);
+        var door = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.0, 0.25), new THREE.MeshStandardMaterial({ color: 0x05070b, emissive: acc, emissiveIntensity: 0.3 }));
+        door.position.set(0, 1.5, 0.32); g.add(door);
         storefrontGroup.add(g);
       }
     })();
 
     // Walk-in interiors: an enclosed room (its own walls occlude the city) built at the shop's
     // spot when W.interior is set. cityHideable is toggled so the outside world doesn't show.
-    var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, storefrontGroup];
+    var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs, storefrontGroup];
     var interiorGroup = null, interiorActive = false, interiorBuiltType = null;
     function clearGroup(g) { for (var i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); }
     function showInterior(it) {

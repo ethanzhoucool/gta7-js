@@ -578,6 +578,11 @@ function run() {
     allDry(MW.shops, 'shop'); allDry(MW.propPos, 'property'); allDry(MW.jobDepots, 'depot'); allDry(MW.zones, 'zone');
     function allRoad(arr, label) { for (var i = 0; i < arr.length; i++) assert.strictEqual(tileAt(arr[i].x, arr[i].z), C.T_ROAD, label + ' ' + i + ' must snap to a road'); }
     allRoad(MW.shops, 'shop'); allRoad(MW.jobDepots, 'depot'); allRoad(MW.propPos, 'property'); allRoad(MW.zones, 'zone');
+    // shops are integrated INTO a building (storefront on a building tile) with the door out on
+    // the road — not floating in the middle of the street.
+    for (var sj = 0; sj < MW.shops.length; sj++) { var sp = MW.shops[sj];
+      assert.strictEqual(tileAt(sp.bx, sp.bz), C.T_BUILDING, 'shop ' + sj + ' storefront sits on a building tile');
+      assert.ok(tileAt(sp.x, sp.z) === C.T_ROAD, 'shop ' + sj + ' door is out on the road'); }
     // downtown zoning: hero towers set (on building tiles); downtown tile tall, residential low
     var hs = MW._heroTowers.sales, hp = MW._heroTowers.pyramid;
     assert.ok(MW.buildingHeights[hs.z][hs.x] === hs.h && MW.buildingHeights[hp.z][hp.x] === hp.h, 'hero towers set');
@@ -640,6 +645,38 @@ function run() {
     ie.step(STEP, { enterPressed: true });
     assert.ok(!IW.interior && !IW.currentShop, 'F leaves the shop');
     assert.ok(Math.abs(IW.player.z - (gun.z + 1.5)) < 0.6, 'player exits onto the street at the door');
+  })();
+
+  // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
+  //     car recovers afterwards (doesn't spin out forever or go non-finite).
+  (function driftCheck() {
+    var de = GTA3D.createEngine(), DW = de.world, i;
+    for (var z = 0; z < de.constants.MAP; z++) for (var x = 0; x < de.constants.MAP; x++) DW.grid[z][x] = de.constants.T_ROAD;
+    for (i = 0; i < DW.peds.length; i++) DW.peds[i].alive = false;
+    var car = null; for (i = 0; i < DW.cars.length; i++) if (DW.cars[i].driver === 'ai') { car = DW.cars[i]; break; }
+    if (car.npc) { car.npc.inCar = false; car.npc = null; }
+    car.x = 500; car.z = 500; car.yaw = 0; car.vx = 0; car.vz = 0; car.speed = 0; car.steer = 0; car.onFire = false; car.exploded = false;
+    car.driver = 'player'; DW.playerCar = car; DW.player.inCar = true; DW.player.car = car;
+    for (i = 0; i < 130; i++) de.step(STEP, { forward: true }); // build speed in a straight line
+    assert.ok(car.speed > 20, 'car reaches speed before the drift (got ' + car.speed.toFixed(1) + ')');
+    var slid = false, maxLat = 0;
+    for (i = 0; i < 45; i++) { de.step(STEP, { forward: true, left: true, handbrake: true });
+      var lat = Math.abs(car.vx * Math.cos(car.yaw) - car.vz * Math.sin(car.yaw)); // lateral velocity component
+      if (lat > maxLat) maxLat = lat; if (car.sliding) slid = true; }
+    assert.ok(slid && maxLat > 6, 'handbrake + steer at speed drifts the rear out (maxLat=' + maxLat.toFixed(1) + ')');
+    for (i = 0; i < 90; i++) de.step(STEP, { forward: true }); // ease off
+    assert.ok(DW.player.inCar && finite(car.vx) && finite(car.vz), 'recovers from the drift, still driving');
+  })();
+
+  // 9p) ped behavior: peds wander along the STREET GRID (cardinal headings), not in random
+  //     directions into walls — the main cure for the old jittery wander.
+  (function pedBehavior() {
+    var pe = GTA3D.createEngine(), PW = pe.world, calm = 0, cardinal = 0;
+    for (var i = 0; i < PW.peds.length; i++) { var p = PW.peds[i];
+      if (!p.alive || p.cop) continue; calm++;
+      var m = p.dir / (Math.PI / 2); if (Math.abs(m - Math.round(m)) < 1e-6) cardinal++; }
+    assert.ok(calm > 5, 'wandering peds exist');
+    assert.strictEqual(cardinal, calm, 'peds walk on cardinal (street-grid) headings, not random angles');
   })();
 
   // 10) long soak with pseudo-random input (now also exercises economy inputs)

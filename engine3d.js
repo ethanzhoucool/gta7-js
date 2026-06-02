@@ -101,6 +101,8 @@
   /* ------------------------------- Utilities ------------------------------ */
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
   function lerp(a, b, t) { return a + (b - a) * t; }
+  var HALF_PI = Math.PI / 2;
+  function snapCardinal(a) { return Math.round(a / HALF_PI) * HALF_PI; } // nearest of N/E/S/W, so peds walk along the street grid
   // Move cur toward target by at most maxDelta (for smooth accel/decel of velocity).
   function approach(cur, target, maxDelta) { var d = target - cur; if (d > maxDelta) return cur + maxDelta; if (d < -maxDelta) return cur - maxDelta; return target; }
   function rand(a, b) { return a + Math.random() * (b - a); }
@@ -269,8 +271,9 @@
       };
     }
     function makePed(x, z, tough) {
+      var d0 = snapCardinal(rand(0, TWO_PI));   // start walking along the street grid
       return {
-        kind: 'ped', x: x, z: z, yaw: rand(0, TWO_PI), dir: rand(0, TWO_PI), speed: 0,
+        kind: 'ped', x: x, z: z, yaw: d0, dir: d0, speed: 0,
         think: rand(0.3, 2), hp: tough ? 60 : 30, alive: true, deadTimer: 0,
         tough: !!tough, hostile: false, panic: 0, stun: 0, launchVx: 0, launchVz: 0,
         witness: false, reportTimer: 0, reportLevel: 0,
@@ -361,6 +364,24 @@
       }
       var p = randomRoad(); return { x: p.x, z: p.z };
     }
+    // Anchor a shop to a BUILDING tile that fronts a road, so the storefront is part of the
+    // building (not floating in the road). Returns the building-tile center (facade), the door
+    // point out on the road (for entry + minimap), and the facing direction (building→road).
+    function snapToStorefront(tx, tz) {
+      var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      for (var r = 0; r <= 6; r++) for (var a = -r; a <= r; a++) for (var b = -r; b <= r; b++) {
+        var bx = tx + a, bz = tz + b;
+        if (tileType(bx, bz) !== T_BUILDING) continue;
+        for (var di = 0; di < 4; di++) {
+          var d = dirs[di];
+          if (tileType(bx + d[0], bz + d[1]) === T_ROAD) {
+            var cx = bx * TILE + TILE / 2, cz = bz * TILE + TILE / 2;
+            return { bx: cx, bz: cz, x: cx + d[0] * (TILE * 0.5 + 1.8), z: cz + d[1] * (TILE * 0.5 + 1.8), dirx: d[0], dirz: d[1] };
+          }
+        }
+      }
+      var p = randomRoad(); return { bx: p.x, bz: p.z, x: p.x, z: p.z, dirx: 0, dirz: -1 };
+    }
     function buildRealtyCatalog() {
       SHOP_CATALOG.realty.items = PROPERTY_DEFS.map(function (d, i) {
         return { label: d.name, price: d.price, apply: function () { if (W.ownedProps.indexOf(i) < 0) W.ownedProps.push(i); } };
@@ -368,8 +389,8 @@
     }
     function placeShops() {
       W.shops = []; var i;
-      for (i = 0; i < SHOP_DEFS.length; i++) { var d = SHOP_DEFS[i], p = snapToRoad(d.tx, d.tz);
-        W.shops.push({ type: d.type, x: p.x, z: p.z, name: SHOP_CATALOG[d.type].name, id: (W._id = (W._id || 0) + 1) }); }
+      for (i = 0; i < SHOP_DEFS.length; i++) { var d = SHOP_DEFS[i], p = snapToStorefront(d.tx, d.tz);
+        W.shops.push({ type: d.type, x: p.x, z: p.z, bx: p.bx, bz: p.bz, dirx: p.dirx, dirz: p.dirz, name: SHOP_CATALOG[d.type].name, id: (W._id = (W._id || 0) + 1) }); }
       // attach property markers (safehouses) to their map positions for rendering/enter
       W.propPos = PROPERTY_DEFS.map(function (d) { return snapToRoad(d.tx, d.tz); });
     }
@@ -818,28 +839,34 @@
       var latSpeed = car.vx * rightx + car.vz * rightz;
 
       // engine / brake / reverse on the forward component
+      // throttle still bites during a handbrake drift (at reduced power) so you can keep the
+      // slide going with the gas instead of just bleeding speed.
+      if (throttle > 0) forwardSpeed += CAR_ENGINE * throttle * (handbrake ? 0.6 : 1) * dt;
       if (handbrake) {
-        // handbrake: scrub forward speed, but leave lateral velocity to slide
-        forwardSpeed -= Math.sign(forwardSpeed) * Math.min(Math.abs(forwardSpeed), CAR_BRAKE * 0.7 * dt);
-      } else if (throttle > 0) forwardSpeed += CAR_ENGINE * throttle * dt;
-      else if (brake) {
+        // light scrub only — keep momentum so the slide carries through the corner
+        forwardSpeed -= Math.sign(forwardSpeed) * Math.min(Math.abs(forwardSpeed), CAR_BRAKE * 0.22 * dt);
+      } else if (brake && throttle <= 0) {
         if (forwardSpeed > 0.5) forwardSpeed = Math.max(0, forwardSpeed - CAR_BRAKE * dt); // brake
         else forwardSpeed -= CAR_REVERSE * dt;                                             // then reverse
-      } else {
+      } else if (throttle <= 0) {
         forwardSpeed -= Math.sign(forwardSpeed) * Math.min(Math.abs(forwardSpeed), CAR_ROLL * dt); // engine braking
       }
       forwardSpeed -= forwardSpeed * CAR_DRAG * dt;
       forwardSpeed = clamp(forwardSpeed, -CAR_TOP_REV, CAR_TOP);
 
-      // lateral grip bleeds off the slide. Handbrake drops grip so the rear steps out.
-      var grip = handbrake ? CAR_GRIP * 0.12 : CAR_GRIP;
+      // lateral grip: planted at low speed, but it LOOSENS when you throw the car hard into a
+      // fast corner (a power-slide) and drops to almost nothing on the handbrake — so drifts
+      // both initiate and hold, then the grip returns and the slide recovers when you settle.
+      var corner = clamp((v - 12) / 34, 0, 1) * Math.abs(steerInput);  // 0..1: speed × steer lock
+      var grip = CAR_GRIP * (1 - corner * 0.55);
+      if (handbrake) grip = CAR_GRIP * 0.08;
       latSpeed -= latSpeed * Math.min(1, grip * dt);
 
       // recompose world velocity
       car.vx = fxv * forwardSpeed + rightx * latSpeed;
       car.vz = fzv * forwardSpeed + rightz * latSpeed;
       car.speed = forwardSpeed;
-      car.sliding = Math.abs(latSpeed) > 6; // for tire-screech FX in the renderer
+      car.sliding = Math.abs(latSpeed) > 5; // for tire-screech FX in the renderer
 
       // integrate with collision (per-axis slide)
       var nx = car.x + car.vx * dt, nz = car.z + car.vz * dt;
@@ -967,7 +994,7 @@
     }
 
     /* ----- peds ----- */
-    function respawnPed(p) { var r = randomRoad(); p.x = r.x; p.z = r.z; p.alive = true; p.cop = false; p.swat = false; p.bounty = false; p.gang = undefined; p.fireCd = 0; p.strafeSign = 1; p.strafeFlip = 0; p.hp = p.tough ? 60 : 30; p.panic = 0; p.stun = 0; p.launchVx = 0; p.launchVz = 0; p.deadTimer = 0; p.witness = false; p.reportTimer = 0; p.hostile = false; p.dir = rand(0, TWO_PI); p.speed = 0; p.think = rand(0.4, 2); }
+    function respawnPed(p) { var r = randomRoad(); p.x = r.x; p.z = r.z; p.alive = true; p.cop = false; p.swat = false; p.bounty = false; p.gang = undefined; p.fireCd = 0; p.strafeSign = 1; p.strafeFlip = 0; p.hp = p.tough ? 60 : 30; p.panic = 0; p.stun = 0; p.launchVx = 0; p.launchVz = 0; p.deadTimer = 0; p.witness = false; p.reportTimer = 0; p.hostile = false; p.dir = snapCardinal(rand(0, TWO_PI)); p.yaw = p.dir; p.speed = 0; p.think = rand(0.4, 2); }
     // Foot officer: face the suspect, hold a standoff (advance/retreat/strafe), and fire flat.
     function updateCopFoot(p, dt) {
       if (p.stun > 0) { p.stun -= dt; p.speed = 0; if (p.stun > 0) return; }
@@ -1026,10 +1053,31 @@
       } else if (p.panic > 0) {
         p.panic -= dt; p.dir = Math.atan2(p.x - W.player.x, p.z - W.player.z); p.speed = PED_FLEE;
       } else if (p.think <= 0) {
-        p.think = rand(0.6, 2.4);
-        if (Math.random() < 0.25) p.speed = 0; else { p.dir = rand(0, TWO_PI); p.speed = PED_WALK; }
+        // wander along the STREET GRID: mostly keep going, sometimes pause, sometimes turn at a
+        // corner. Cardinal headings (not random angles) keep peds walking the sidewalks naturally.
+        p.think = rand(1.6, 3.6);
+        var r = Math.random();
+        if (r < 0.16) p.speed = 0;                                                    // pause on the sidewalk
+        else { p.speed = PED_WALK; if (r > 0.64) p.dir = snapCardinal(p.dir) + (Math.random() < 0.5 ? HALF_PI : -HALF_PI); }
+        p.dir = snapCardinal(p.dir);
       }
-      if (p.speed > 0) { p.yaw = p.dir; var b = p.x + p.z; moveCircle(p, p.x + Math.sin(p.dir) * p.speed * dt, p.z + Math.cos(p.dir) * p.speed * dt, PLAYER_RADIUS); if (Math.abs((p.x + p.z) - b) < 0.001 && p.panic <= 0 && !p.hostile) p.dir = rand(0, TWO_PI); }
+      if (p.speed > 0) {
+        p.yaw = angTowards(p.yaw, p.dir, 8 * dt);                                      // smooth turn, no snapping
+        var fxp = Math.sin(p.dir), fzp = Math.cos(p.dir), rxp = Math.cos(p.dir), rzp = -Math.sin(p.dir);
+        // curb-hug: drift toward whichever side has buildings so peds walk the sidewalk edge,
+        // not down the middle of the road. Only when calmly wandering (not fleeing/charging).
+        var nudge = 0;
+        if (p.panic <= 0 && !p.hostile) {
+          if (solidAt(p.x + rxp * 20, p.z + rzp * 20)) nudge += 1;
+          if (solidAt(p.x - rxp * 20, p.z - rzp * 20)) nudge -= 1;
+        }
+        var vx = fxp * p.speed + rxp * nudge * PED_WALK * 0.5;
+        var vz = fzp * p.speed + rzp * nudge * PED_WALK * 0.5;
+        var b = p.x + p.z;
+        moveCircle(p, p.x + vx * dt, p.z + vz * dt, PLAYER_RADIUS);
+        // blocked by a wall/curb: turn 90° to follow the street rather than spinning randomly
+        if (Math.abs((p.x + p.z) - b) < 0.001 && p.panic <= 0 && !p.hostile) p.dir = snapCardinal(p.dir) + (Math.random() < 0.5 ? HALF_PI : -HALF_PI);
+      }
       return true;
     }
     function runOverPeds(car, byPlayer) {

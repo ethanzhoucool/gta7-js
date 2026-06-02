@@ -57,10 +57,19 @@ var DIR = path.resolve(__dirname, '..');
     W.player.x = (ht.x - 4) * TILE; W.player.z = (ht.z + 4) * TILE; W.player.y = 0;
     if (window.__setCam) window.__setCam(Math.PI * 1.5, 0.5); // look up toward the towers
   });
-  // 4) a residential street, slight downward tilt to show the road + sidewalks + building bases
+  // 4) a residential street — show road + sidewalks + peds walking the sides + varied buildings
   var d = await shot('shot-sf-street.png', function (W, K, TILE) {
+    var eng = window.__ENG; for (var k = 0; k < 220; k++) eng.step(1 / 60, {}); // let peds settle onto sidewalks
     W.player.inCar = false; W.player.x = 16 * TILE + 7; W.player.z = 56 * TILE + 7; W.player.y = 0; // SF SW grid
     if (window.__setCam) window.__setCam(Math.PI * 0.5, -0.12); // look east down the street, slightly down
+  });
+  // 6) a storefront from across the street — the shop should be built INTO a building, not floating
+  var f = await shot('shot-sf-storefront.png', function (W, K, TILE) {
+    var gun = null; for (var i = 0; i < W.shops.length; i++) if (W.shops[i].type === 'gun') gun = W.shops[i];
+    var dx = gun.dirx || 0, dz = gun.dirz != null ? gun.dirz : -1; // building→road (away from facade)
+    var px = gun.x + dx * 6 + (-dz) * 9, pz = gun.z + dz * 6 + dx * 9; // stand off to the side, in the street
+    W.player.inCar = false; W.player.x = px; W.player.z = pz; W.player.y = 0;
+    if (window.__setCam) window.__setCam(Math.atan2(gun.bx - px, gun.bz - pz), 0.12); // look diagonally at the facade + sign
   });
   // 5) INSIDE the gun shop — should read as a gun shop (counter, wall gun racks)
   var e = await shot('shot-sf-gunshop.png', function (W, K, TILE) {
