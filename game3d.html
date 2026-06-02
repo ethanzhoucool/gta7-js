@@ -507,7 +507,7 @@
     var keys = {}, justF = false, justE = false, justSpace = false, justB = false, justN = false, justH = false;
     var justJ = false, justQ = false, weaponSlot = -1; // job / weapon-cycle / weapon-slot edges
     var mouseDown = false, rmbDown = false, locked = false;
-    var camYaw = 0, camPitch = 0.25;
+    var camYaw = 0, camPitch = -0.18;   // look pitch: + up, − down. default slightly down (3/4 view)
     window.__setCam = function (y, p) { camYaw = y; camPitch = p; }; // test hook: aim the camera for screenshots
     var MOUSE_SENS = 0.0024, AIM_SENS = 0.0013;   // finer sensitivity while aiming (ADS)
     document.addEventListener('keydown', function (e) {
@@ -529,7 +529,7 @@
       var s = (rmbDown && !W.player.inCar) ? AIM_SENS : MOUSE_SENS;
       camYaw -= e.movementX * s;
       camPitch -= e.movementY * s;
-      camPitch = Math.max(-0.35, Math.min(1.1, camPitch));
+      camPitch = Math.max(-0.62, Math.min(1.25, camPitch));   // allow looking well up (aim at choppers) and down
     });
     document.addEventListener('mousedown', function (e) { if (!locked) return; if (e.button === 2) rmbDown = true; else mouseDown = true; });
     document.addEventListener('mouseup', function (e) { if (e.button === 2) rmbDown = false; else mouseDown = false; });
@@ -567,7 +567,7 @@
         if (!t.engaged) { if (Math.hypot(dx, dy) < LOOK_ENGAGE) return; t.engaged = true; }
         t.lastX = x; t.lastY = y;
         var s = ((rmbDown && !W.player.inCar) ? AIM_SENS : MOUSE_SENS) * LOOK_SENS_MUL;
-        camYaw -= dx * s; camPitch -= dy * s; camPitch = Math.max(-0.35, Math.min(1.1, camPitch));
+        camYaw -= dx * s; camPitch -= dy * s; camPitch = Math.max(-0.62, Math.min(1.25, camPitch));
       }
       function pressBtn(act, el) {
         if (el) el.classList.add('held');
@@ -622,10 +622,20 @@
     /* =================== END MOBILE TOUCH CONTROLS =================== */
 
     // test probe: lets the mobile harness read the real input state touch handlers set
-    window.__probe = function () { return { keys: keys, mouseDown: mouseDown, rmbDown: rmbDown, camYaw: camYaw, justF: justF, justE: justE }; };
+    window.__probe = function () { return { keys: keys, mouseDown: mouseDown, rmbDown: rmbDown, camYaw: camYaw, camPitch: camPitch, solvedAimYaw: solvedAimYaw, solvedAimPitch: solvedAimPitch, justF: justF, justE: justE }; };
     // test hook: build the current input the way frame() does, then step the engine once,
-    // so harnesses can verify touch->input->engine deterministically (no rAF-timing race)
-    window.__stepWithInput = function () { eng.step(STEP, buildInput(true)); };
+    // so harnesses can verify touch->input->engine deterministically (no rAF-timing race).
+    // Refresh the camera-accurate aim solve first (frame() does this each frame on foot).
+    window.__stepWithInput = function () { if (!W.player.inCar) solveAim(); eng.step(STEP, buildInput(true)); };
+    // test hook: deterministically aim (yaw,pitch), converge the orbit camera (no rAF-timing
+    // dependence), refresh world matrices, then run the firing solve and report it.
+    window.__aimSolve = function (yaw, pitch) {
+      camYaw = yaw; camPitch = pitch;
+      for (var i = 0; i < 40; i++) updateCamera(1 / 60);
+      camera.updateMatrixWorld(true);
+      solveAim();
+      return { yaw: solvedAimYaw, pitch: solvedAimPitch };
+    };
 
     var hintEl = document.getElementById('hint');
     function started() { return locked || W.time > 0.5; }
@@ -651,27 +661,28 @@
         useYaw = camYaw;
       }
       var aiming = !p.inCar && !!p.aiming;
-      // pulled-back, higher 3/4 view so the character reads small-in-world (GTA-like),
-      // not a face-filling close-up. Steeper downward angle keeps the city legible.
-      var baseDist = p.inCar ? 14 : (aiming ? 6 : 11);
+      // Camera POSITION: behind the player (horizontal) at a steady height — INDEPENDENT of
+      // pitch, so looking up is never flattened by a ground clamp. clearCamDist pulls it in
+      // past walls. Camera ORIENTATION is set straight from (yaw,pitch) so the screen-center
+      // aim ray EXACTLY equals the look direction — you can put the reticle on a chopper above.
+      var baseDist = p.inCar ? 13 : (aiming ? 6.5 : 9);
       var dist = clearCamDist(p.x, p.z, useYaw, baseDist);
-      var height = (p.inCar ? 7 : (aiming ? 4 : 7.5)) + camPitch * (aiming ? 4 : 6);
       var rx = Math.cos(useYaw), rz = -Math.sin(useYaw);          // camera-right vector
-      var shoulder = aiming ? 1.4 : 0;                            // over-the-shoulder when aiming
+      var shoulder = aiming ? 1.5 : 0.7;                          // slight over-the-shoulder offset
+      var camHeight = (p.inCar ? 6 : (aiming ? 4.5 : 5.6));
       var desX = p.x - Math.sin(useYaw) * dist + rx * shoulder;
       var desZ = p.z - Math.cos(useYaw) * dist + rz * shoulder;
-      var desY = (p.y || 0) + height;
-      // damped follow: snappy but jitter-free; snap into place on the very first frame
+      var desY = (p.y || 0) + camHeight;
+      // damped follow on POSITION (snappy but jitter-free); snap on the very first frame
       var k = camInit ? (1 - Math.exp(-14 * dt)) : 1; camInit = true;
       camera.position.x += (desX - camera.position.x) * k;
       camera.position.y += (desY - camera.position.y) * k;
       camera.position.z += (desZ - camera.position.z) * k;
-      // smoothed look target, biased slightly toward where the player faces
-      var tgtX = p.x + Math.sin(useYaw) * 2.0 + rx * shoulder;
-      var tgtZ = p.z + Math.cos(useYaw) * 2.0 + rz * shoulder;
-      camTarget.x += (tgtX - camTarget.x) * k;
-      camTarget.y += (((p.y || 0) + 1.2) - camTarget.y) * k;
-      camTarget.z += (tgtZ - camTarget.z) * k;
+      // orientation: aim FAR along the (yaw,pitch) dir from the smoothed camera position, so
+      // camera-forward == the firing direction. Instant (no lag) for responsive aiming.
+      var cosP = Math.cos(camPitch), sinP = Math.sin(camPitch);
+      var fwdX = Math.sin(useYaw) * cosP, fwdY = sinP, fwdZ = Math.cos(useYaw) * cosP;
+      camTarget.set(camera.position.x + fwdX * 60, camera.position.y + fwdY * 60, camera.position.z + fwdZ * 60);
       // screen shake (Eiserloh trauma model): shake = trauma^2, decays each frame.
       // W.trauma is bumped by the engine's fx() on impacts/kills/explosions.
       W.trauma = Math.max(0, (W.trauma || 0) - dt * 1.6);
