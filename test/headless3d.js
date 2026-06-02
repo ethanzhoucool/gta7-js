@@ -679,6 +679,25 @@ function run() {
     assert.strictEqual(cardinal, calm, 'peds walk on cardinal (street-grid) headings, not random angles');
   })();
 
+  // 9q) bar drink buff: a SEPARATE temp damage factor (never corrupts the permanent gun
+  //     upgrade or the rampage snapshot), decays over time, and clears on respawn.
+  (function barBuffCheck() {
+    var be = GTA3D.createEngine(), BW = be.world, BIN = be._internal, k;
+    BW.money = 1000;
+    assert.ok(BIN.buyItem('bar', 1) === true && BW.player.barBuff >= 2, 'whiskey stacks the bar buff (' + BW.player.barBuff + ')');
+    assert.strictEqual(BW.player.gunDmgMul, 1, 'bar buff does NOT touch the permanent damage upgrade');
+    BW.player.weapon = 'pistol'; BW.player.ammo = 999999; BW.fireCd = 0; BW.bullets.length = 0;
+    BIN.fireWeapon({ shoot: true, aimYaw: 0 });
+    var b = BW.bullets.filter(function (x) { return x.team === 'player'; })[0];
+    assert.ok(b && Math.abs(b.dmg - 34 * 1.5) < 0.01, 'buffed pistol does +50% (dmg=' + (b ? b.dmg : 'none') + ')');
+    var before = BW.player.barBuff; for (k = 0; k < 120; k++) be.step(STEP, {});
+    assert.ok(BW.player.barBuff < before, 'bar buff decays over time');
+    // dying clears it — no carrying a buff through the hospital
+    BW.player.barBuff = 3; BW.player.hp = 0;
+    for (k = 0; k < 400; k++) { be.step(STEP, {}); if (k > 5 && BW.state === 'play' && BW.player.hp > 0) break; }
+    assert.strictEqual(BW.player.barBuff, 0, 'bar buff is cleared on respawn');
+  })();
+
   // 10) long soak with pseudo-random input (now also exercises economy inputs)
   var seed = 99991;
   function lcg() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
