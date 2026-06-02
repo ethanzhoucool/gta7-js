@@ -62,6 +62,14 @@ var DIR = path.resolve(__dirname, '..');
     W.player.inCar = false; W.player.x = 16 * TILE + 7; W.player.z = 56 * TILE + 7; W.player.y = 0; // SF SW grid
     if (window.__setCam) window.__setCam(Math.PI * 0.5, -0.12); // look east down the street, slightly down
   });
+  // 5) INSIDE the gun shop — should read as a gun shop (counter, wall gun racks)
+  var e = await shot('shot-sf-gunshop.png', function (W, K, TILE) {
+    var IN = window.__ENG._internal, gun = null;
+    for (var i = 0; i < W.shops.length; i++) if (W.shops[i].type === 'gun') gun = W.shops[i];
+    W.player.inCar = false; W.player.x = gun.x; W.player.z = gun.z; W.player.y = 0;
+    IN.enterShop(gun);
+    if (window.__setCam) window.__setCam(Math.PI, 0.12); // face the back counter + gun racks
+  });
 
   console.log('SF_SHOTS ' + JSON.stringify({ a: a, b: b, c: c }) + ' errs=' + errs.length);
   if (errs.length) console.log('ERRS ' + JSON.stringify(errs.slice(0, 5)));

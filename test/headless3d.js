@@ -613,6 +613,35 @@ function run() {
     assert.ok(Math.abs(car.x - cx) < T, 'stayed on the bridge deck (did not veer into the bay)');
   })();
 
+  // 9n) walk-in shops: F at the gun shop steps inside, the city sim pauses, the buy menu
+  //     works, you're confined to the room, and F (or walking out) returns to the street.
+  (function shopInterior() {
+    var ie = GTA3D.createEngine(), IW = ie.world, IN = ie._internal, i;
+    var gun = null; for (i = 0; i < IW.shops.length; i++) if (IW.shops[i].type === 'gun') gun = IW.shops[i];
+    assert.ok(gun, 'a gun shop exists');
+    IW.player.inCar = false; IW.player.x = gun.x; IW.player.z = gun.z;
+    var probe = null; for (i = 0; i < IW.cars.length; i++) if (IW.cars[i].driver === 'ai') { probe = IW.cars[i]; break; }
+    IN.tryEnterExit();
+    assert.ok(IW.interior && IW.interior.type === 'gun', 'pressing F at the gun shop steps inside');
+    assert.strictEqual(IW.currentShop, gun, 'the buy menu is active inside the shop');
+    // the city sim is PAUSED while shopping: an AI car must not move on an interior step
+    var px0 = probe ? probe.x : 0, pz0 = probe ? probe.z : 0;
+    ie.step(STEP, { camYaw: 0 });
+    if (probe) assert.ok(probe.x === px0 && probe.z === pz0, 'the city sim is paused while shopping');
+    // buying works from inside: highlight the SMG (gun catalog index 1) and buy it
+    IW.money = 6000; IW.shopIndex = 1;
+    ie.step(STEP, { buyPressed: true });
+    assert.ok(IW.player.weapons.smg === true, 'can buy a weapon from inside the shop');
+    // confined to the room: walking deeper in (−z) keeps you inside, clamped to the room
+    for (i = 0; i < 80; i++) ie.step(STEP, { forward: true, camYaw: Math.PI });
+    assert.ok(IW.interior, 'walking deeper into the shop stays inside');
+    assert.ok(Math.abs(IW.player.x - IW.interior.baseX) <= 8 && IW.player.z >= IW.interior.baseZ - 12.5, 'player is confined to the room');
+    // F leaves, back onto the street at the door
+    ie.step(STEP, { enterPressed: true });
+    assert.ok(!IW.interior && !IW.currentShop, 'F leaves the shop');
+    assert.ok(Math.abs(IW.player.z - (gun.z + 1.5)) < 0.6, 'player exits onto the street at the door');
+  })();
+
   // 10) long soak with pseudo-random input (now also exercises economy inputs)
   var seed = 99991;
   function lcg() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }

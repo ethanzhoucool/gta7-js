@@ -172,6 +172,7 @@
       message: '',
       // --- economy ---
       shops: [], currentShop: null, shopIndex: 0,
+      interior: null,           // when inside a shop: { type, name, baseX, baseZ } — sim pauses, room renders
       stores: [],               // robbable convenience stores (repeatable earners)
       ownedCarTier: 0,          // index into CAR_TIERS for the player's respawn car
       ownedProps: [],           // indices of bought apartments (safehouses + passive income)
@@ -480,6 +481,36 @@
       if (!W.currentShop) return;
       var cat = SHOP_CATALOG[W.currentShop.type];
       if (cat && cat.items.length) W.shopIndex = (W.shopIndex + 1) % cat.items.length;
+    }
+    // Walk-in shop interiors. Entering pauses the city sim and renders a themed room (the
+    // gun shop looks like a gun shop); the buy menu (B/N) works inside; F or walking out leaves.
+    function enterShop(s) {
+      if (!s || W.player.inCar) return;
+      W.interior = { type: s.type, name: s.name, baseX: W.player.x, baseZ: W.player.z };
+      W.currentShop = s; W.shopIndex = 0;
+      W.player.z -= 3;            // step a few units inside, facing the back counter
+      W.player.inCar = false; W.player.y = 0; W.player.vy = 0;
+      post('@you', '🚪 Entered ' + s.name + '. [B] buy · [N] next · [F] leave');
+    }
+    function exitShop() {
+      if (!W.interior) return;
+      W.player.x = W.interior.baseX; W.player.z = W.interior.baseZ + 1.5; // back out onto the street
+      W.player.y = 0; W.player.vy = 0;
+      W.interior = null; W.currentShop = null;
+      post('@you', 'Back on the street.');
+    }
+    function interiorStep(dt, input) {
+      var p = W.player, it = W.interior, cy = input.camYaw || 0, fx2 = 0, fz2 = 0;
+      if (input.forward) { fx2 += Math.sin(cy); fz2 += Math.cos(cy); }
+      if (input.back) { fx2 -= Math.sin(cy); fz2 -= Math.cos(cy); }
+      if (input.left) { fx2 += Math.sin(cy + Math.PI / 2); fz2 += Math.cos(cy + Math.PI / 2); }
+      if (input.right) { fx2 += Math.sin(cy - Math.PI / 2); fz2 += Math.cos(cy - Math.PI / 2); }
+      var len = Math.hypot(fx2, fz2);
+      if (len > 0.001) { p.x += (fx2 / len) * PLAYER_WALK * 0.85 * dt; p.z += (fz2 / len) * PLAYER_WALK * 0.85 * dt; p.moving = true; } else p.moving = false;
+      p.y = 0; p.vy = 0; p.onGround = true; p.aiming = false;
+      if (p.z >= it.baseZ + 0.4) { exitShop(); return; }  // walked back out the front doorway
+      p.x = clamp(p.x, it.baseX - 7.5, it.baseX + 7.5);  // confine to the room
+      p.z = clamp(p.z, it.baseZ - 12, it.baseZ + 0.5);
     }
 
     /* =============================== WEAPONS ============================== */
@@ -1075,6 +1106,7 @@
     }
     function tryEnterExit() {
       var p = W.player;
+      if (W.interior) { exitShop(); return; }   // F leaves a shop
       if (p.inCar) {
         var car = W.playerCar;
         var ox = car.x + Math.cos(car.yaw) * (CAR_HALF_W + 1.2);
@@ -1086,8 +1118,14 @@
       }
       var c = nearestCar(4.5);
       var pc = nearestPoliceCar(4.5);
+      var shop = nearestShop(3.6);
+      // pick the closest interactable: walk into a shop, steal a cruiser, or grab a car
+      var carD = c ? d2(c.x, c.z, p.x, p.z) : 1e9;
+      var pcD = pc ? d2(pc.x, pc.z, p.x, p.z) : 1e9;
+      var shopD = shop ? d2(shop.x, shop.z, p.x, p.z) : 1e9;
+      if (shop && shopD <= carD && shopD <= pcD) { enterShop(shop); return; }
       // steal the cruiser if it's the closest stealable vehicle
-      if (pc && (!c || d2(pc.x, pc.z, p.x, p.z) < d2(c.x, c.z, p.x, p.z))) { stealPoliceCar(pc); return; }
+      if (pc && pcD < carD) { stealPoliceCar(pc); return; }
       if (!c) return;
       var hadDriver = (c.driver === 'ai' || (c.npc && c.npc.inCar));
       if (hadDriver && c.npc) {
@@ -1352,6 +1390,17 @@
       if (W.flash > 0) W.flash = Math.max(0, W.flash - dt);
       for (var i = 0; i < W.peds.length; i++) if (W.peds[i].robbedCd > 0) W.peds[i].robbedCd -= dt;
 
+      // INSIDE a shop: the city sim is paused. Only the buy menu + walking the room run.
+      if (W.interior) {
+        if (input.enterPressed) { exitShop(); return; }
+        if (input.buyPressed) tryOpenOrBuy();
+        if (input.cyclePressed) cycleShop();
+        if (input.weaponSlot >= 0 && input.weaponSlot !== undefined) switchWeapon(WEAPON_ORDER[input.weaponSlot]);
+        interiorStep(dt, input);
+        recomputeNetWorth();
+        return;
+      }
+
       // store cooldowns + passive income + live net worth/goals + weather run every tick (even dead)
       for (i = 0; i < W.stores.length; i++) if (W.stores[i].cooldown > 0) W.stores[i].cooldown -= dt;
       passiveIncome(dt);
@@ -1437,7 +1486,7 @@
       _internal: { tryEnterExit: tryEnterExit, robNearest: robNearest, fireWeapon: fireWeapon, commitCrime: commitCrime,
         lineOfSight: lineOfSight, circleHitsSolid: circleHitsSolid, nearestCar: nearestCar, reset: reset, alertPolice: alertPolice,
         hurtPlayer: hurtPlayer, buyItem: buyItem, shopCatalog: shopCatalog, nearestShop: nearestShop, nearestProperty: nearestProperty,
-        robStore: robStore, enterSafehouse: enterSafehouse, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
+        robStore: robStore, enterSafehouse: enterSafehouse, enterShop: enterShop, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
         killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,

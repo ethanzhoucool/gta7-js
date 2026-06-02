@@ -389,6 +389,88 @@
         new THREE.MeshStandardMaterial({ color: 0xE8E8E0, roughness: 0.4 }));
     }
 
+    /* ----------------------- Storefronts + shop interiors ----------------- */
+    // Each shop gets an awning + lit sign + doorway so it reads as a real store, mounted on
+    // the building beside its door. Walk up and press F to step inside (see below).
+    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9 };
+    var storefrontGroup = new THREE.Group(); scene.add(storefrontGroup);
+    (function buildStorefronts() {
+      var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      for (var s = 0; s < W.shops.length; s++) {
+        var sh = W.shops[s], acc = SHOP_ACCENT[sh.type] || 0xffd23f;
+        var stx = Math.floor(sh.x / TILE), stz = Math.floor(sh.z / TILE), bdir = null;
+        for (var di = 0; di < 4; di++) { var nx = stx + dirs[di][0], nz = stz + dirs[di][1];
+          if (W.grid[nz] && W.grid[nz][nx] === K.T_BUILDING) { bdir = dirs[di]; break; } }
+        if (!bdir) bdir = [0, -1];
+        var fx = sh.x + bdir[0] * TILE * 0.5, fz = sh.z + bdir[1] * TILE * 0.5, yaw = Math.atan2(-bdir[0], -bdir[1]);
+        var g = new THREE.Group(); g.position.set(fx, 0, fz); g.rotation.y = yaw;
+        var awn = new THREE.Mesh(new THREE.BoxGeometry(7, 0.4, 2.4), new THREE.MeshStandardMaterial({ color: acc, roughness: 0.7 }));
+        awn.position.set(0, 3.0, 1.3); awn.rotation.x = -0.32; awn.castShadow = true; g.add(awn);
+        var sign = new THREE.Mesh(new THREE.BoxGeometry(6, 1.1, 0.3), new THREE.MeshStandardMaterial({ color: acc, emissive: acc, emissiveIntensity: 0.5 }));
+        sign.position.set(0, 4.3, 0.25); g.add(sign);
+        var door = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.2, 0.2), new THREE.MeshStandardMaterial({ color: 0x0d0f14, emissive: acc, emissiveIntensity: 0.22 }));
+        door.position.set(0, 1.6, 0.15); g.add(door);
+        storefrontGroup.add(g);
+      }
+    })();
+
+    // Walk-in interiors: an enclosed room (its own walls occlude the city) built at the shop's
+    // spot when W.interior is set. cityHideable is toggled so the outside world doesn't show.
+    var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, storefrontGroup];
+    var interiorGroup = null, interiorActive = false;
+    function clearGroup(g) { for (var i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); }
+    function showInterior(it) {
+      if (!interiorGroup) { interiorGroup = new THREE.Group(); scene.add(interiorGroup); }
+      clearGroup(interiorGroup); buildInteriorRoom(interiorGroup, it.type);
+      interiorGroup.position.set(it.baseX, 0, it.baseZ); interiorGroup.visible = true;
+      for (var i = 0; i < cityHideable.length; i++) if (cityHideable[i]) cityHideable[i].visible = false;
+      interiorActive = true;
+    }
+    function hideInterior() {
+      if (interiorGroup) interiorGroup.visible = false;
+      for (var i = 0; i < cityHideable.length; i++) if (cityHideable[i]) cityHideable[i].visible = true;
+      interiorActive = false;
+    }
+    // Local frame: door gap at z≈D0 (player enters at z=baseZ-3 → local -3), counter at the back (D1).
+    function buildInteriorRoom(g, type) {
+      var HW = 8.5, D0 = 0.5, D1 = -13, H = 5.2;
+      var accent = SHOP_ACCENT[type] || 0xffd23f;
+      var wallMat = new THREE.MeshStandardMaterial({ color: 0x2a2c33, roughness: 0.95 });
+      var floorMat = new THREE.MeshStandardMaterial({ color: 0x4a4038, roughness: 0.85 });
+      function box(w, h, d, x, y, z, mat) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); g.add(m); return m; }
+      box(HW * 2, 0.2, (D0 - D1), 0, 0.0, (D0 + D1) / 2, floorMat);            // floor
+      box(HW * 2, 0.2, (D0 - D1), 0, H, (D0 + D1) / 2, wallMat);               // ceiling
+      box(HW * 2, H, 0.3, 0, H / 2, D1, wallMat);                             // back wall
+      box(0.3, H, (D0 - D1), -HW, H / 2, (D0 + D1) / 2, wallMat);              // left wall
+      box(0.3, H, (D0 - D1), HW, H / 2, (D0 + D1) / 2, wallMat);               // right wall
+      box(HW - 1.5, H, 0.3, -(HW / 2 + 0.75), H / 2, D0, wallMat);             // front, left of door
+      box(HW - 1.5, H, 0.3, (HW / 2 + 0.75), H / 2, D0, wallMat);              // front, right of door
+      box(HW * 2, 1.0, 0.3, 0, H - 0.5, D0, wallMat);                          // door lintel
+      box(9, 1.0, 0.25, 0, H - 1.0, D1 + 0.35, new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.6 })); // back sign
+      var lamp1 = new THREE.PointLight(0xfff2d6, 2.6, 44); lamp1.position.set(0, H - 0.6, (D0 + D1) / 2 + 2); g.add(lamp1);
+      var lamp2 = new THREE.PointLight(0xfff2d6, 1.5, 44); lamp2.position.set(0, H - 0.6, D1 + 3); g.add(lamp2);
+      box(13, 1.1, 1.6, 0, 0.55, D1 + 1.7, new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.5, metalness: 0.2 })); // counter
+      if (type === 'gun') {
+        var gunMat = new THREE.MeshStandardMaterial({ color: 0x14161b, roughness: 0.5, metalness: 0.45 });
+        var woodMat = new THREE.MeshStandardMaterial({ color: 0x5a3d22, roughness: 0.85 });
+        for (var row = 0; row < 2; row++) { var ry = 2.3 + row * 1.25;
+          box(12, 0.16, 0.4, 0, ry - 0.22, D1 + 0.5, woodMat);                                          // wall shelf
+          for (var gx = 0; gx < 7; gx++) box(1.4, 0.2, 0.2, -5.4 + gx * 1.8, ry, D1 + 0.55, gunMat); }   // rifles on the rack
+        for (var px = 0; px < 5; px++) box(0.55, 0.14, 0.7, -4 + px * 2, 1.2, D1 + 1.7, gunMat);          // pistols in the glass case
+        box(1.5, 1.5, 1.5, -6.6, 0.75, D1 + 4, woodMat); box(1.5, 1.5, 1.5, 6.3, 0.75, D1 + 5.5, woodMat); // ammo crates
+      } else if (type === 'car') {
+        var disp = carMesh(accent, false); disp.position.set(0, 0, D1 + 6); disp.rotation.y = 0.6; g.add(disp);  // a car on display
+        box(7, 0.1, 7, 0, 0.06, D1 + 6, new THREE.MeshStandardMaterial({ color: 0x222831, roughness: 0.3, metalness: 0.5 }));
+      } else if (type === 'style') {
+        var cols = [0xff7ad9, 0x5ad1ff, 0xffd23f, 0x6bf08a, 0xb59cff];
+        for (var r2 = 0; r2 < 3; r2++) { var rx = -5 + r2 * 5;
+          box(0.12, 0.12, 4.5, rx, 2.3, D1 + 5, new THREE.MeshStandardMaterial({ color: 0x999999 }));      // clothing rail
+          for (var c2 = 0; c2 < 5; c2++) box(0.7, 1.5, 0.4, rx, 1.55, D1 + 3.2 + c2 * 0.85, new THREE.MeshStandardMaterial({ color: cols[c2] })); }
+      } else {
+        box(3.4, 1.0, 1.7, 0, 0.5, D1 + 6, new THREE.MeshStandardMaterial({ color: 0x3a2f4a, roughness: 0.7 }));  // realty desk
+      }
+    }
+
     /* ----------------------------- Entity meshes -------------------------- */
     // Shared (allocate once) — the pools reuse these across all entities.
     var carWheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.3, 12); carWheelGeo.rotateZ(Math.PI / 2);
@@ -693,11 +775,11 @@
       // pitch, so looking up is never flattened by a ground clamp. clearCamDist pulls it in
       // past walls. Camera ORIENTATION is set straight from (yaw,pitch) so the screen-center
       // aim ray EXACTLY equals the look direction — you can put the reticle on a chopper above.
-      var baseDist = p.inCar ? 13 : (aiming ? 6.5 : 9);
+      var baseDist = W.interior ? 5 : (p.inCar ? 13 : (aiming ? 6.5 : 9));
       var dist = clearCamDist(p.x, p.z, useYaw, baseDist);
       var rx = Math.cos(useYaw), rz = -Math.sin(useYaw);          // camera-right vector
       var shoulder = aiming ? 1.5 : 0.7;                          // slight over-the-shoulder offset
-      var camHeight = (p.inCar ? 6 : (aiming ? 4.5 : 5.6));
+      var camHeight = W.interior ? 3.6 : (p.inCar ? 6 : (aiming ? 4.5 : 5.6));
       var desX = p.x - Math.sin(useYaw) * dist + rx * shoulder;
       var desZ = p.z - Math.cos(useYaw) * dist + rz * shoulder;
       var desY = (p.y || 0) + camHeight;
@@ -803,6 +885,15 @@
       playerG.visible = !p.inCar;
       if (!p.inCar) { var pb = stepWalk(playerG, p.x, p.z, dt); playerG.position.set(p.x, (p.y || 0) + pb, p.z); playerG.rotation.y = p.yaw; }
       else { playerG._lx = null; playerG._lz = null; }
+
+      // shop interior: render the enclosed room, hide the city + every street entity
+      if (W.interior && !interiorActive) showInterior(W.interior);
+      else if (!W.interior && interiorActive) hideInterior();
+      if (W.interior) {
+        hideFrom(carPool, 0); hideFrom(policePool, 0); hideFrom(heliPool, 0);
+        hideFrom(pedPool, 0); hideFrom(bulletPool, 0); hideFrom(pickupPool, 0);
+        return;
+      }
 
       var i;
       for (i = 0; i < W.cars.length; i++) { var c = W.cars[i]; var g = ensure(carPool, function () { return carMesh(0xffffff, true); }, i); syncCarGroup(g, c);
