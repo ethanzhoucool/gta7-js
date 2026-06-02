@@ -440,7 +440,7 @@
       // rebuild props only when the shop TYPE changes (≤4 builds ever) — not every entry
       if (interiorBuiltType !== it.type) { clearGroup(interiorGroup); buildInteriorRoom(interiorGroup, it.type); interiorBuiltType = it.type; }
       interiorGroup.position.set(it.baseX, 0, it.baseZ); interiorGroup.visible = true;
-      camPitch = -0.05; // level the view on entry (don't keep an upward chopper-aim pitch indoors)
+      camPitch = -0.05; smoothPitch = -0.05; // level the view on entry (snap both so it doesn't drift level over ~100ms)
       for (var i = 0; i < cityHideable.length; i++) if (cityHideable[i]) cityHideable[i].visible = false;
       interiorActive = true;
     }
@@ -640,7 +640,7 @@
     var smoothYaw = 0, smoothPitch = -0.18;   // display orientation chases raw camYaw/camPitch (~50ms)
     var leadX = 0, leadZ = 0;                  // velocity look-ahead offset (eased)
     var curFOV = 60, camDist = 9;              // smoothed FOV + collision distance (eases back out)
-    var playerVisYaw = 0;                      // body facing eases toward p.yaw (no snap)
+    var playerVisYaw = 0, camWasInCar = false; // body facing eases toward p.yaw; track car→foot transition
     window.__setCam = function (y, p) { camYaw = y; camPitch = p; }; // test hook: aim the camera for screenshots
     var MOUSE_SENS = 0.0024, AIM_SENS = 0.0013;   // finer sensitivity while aiming (ADS)
     document.addEventListener('keydown', function (e) {
@@ -798,15 +798,17 @@
       // --- velocity look-ahead: lead the camera toward where you're moving/heading ---
       var rawVx = (p.inCar && W.playerCar) ? (W.playerCar.vx || 0) : (p.vx || 0);
       var rawVz = (p.inCar && W.playerCar) ? (W.playerCar.vz || 0) : (p.vz || 0);
-      var vLen = Math.hypot(rawVx, rawVz), topSpd = p.inCar ? 46 : 12.5, maxLead = aiming ? 0 : (p.inCar ? 7 : 2);
+      if (!p.inCar && camWasInCar) { leadX = 0; leadZ = 0; } // dump the car's big lead on foot-exit so it doesn't overshoot
+      var vLen = Math.hypot(rawVx, rawVz), topSpd = p.inCar ? 46 : 12.5, maxLead = aiming ? 0 : (p.inCar ? 5 : 2);
       var leadAmt = vLen > 0.5 ? Math.min(vLen / topSpd, 1) * maxLead : 0;
       var kLead = first ? 1 : (1 - Math.exp(-4 * dt));
       leadX += ((vLen > 0.5 ? rawVx / vLen * leadAmt : 0) - leadX) * kLead;
       leadZ += ((vLen > 0.5 ? rawVz / vLen * leadAmt : 0) - leadZ) * kLead;
-      var pivX = p.x + leadX, pivZ = p.z + leadZ;
-      // --- collision distance: pull in INSTANTLY past walls, ease back out at 6 u/s ---
-      var wantDist = W.interior ? 5 : (p.inCar ? 13 : (aiming ? 6.5 : 9));
-      var maxPull = clearCamDist(pivX, pivZ, useYaw, wantDist);
+      var pivX = p.x + leadX, pivZ = p.z + leadZ, leadMag = Math.hypot(leadX, leadZ);
+      // --- collision distance: pull in INSTANTLY past walls, ease back out at 6 u/s.
+      // Pull back by the lead amount so leading the car forward doesn't shrink the chase gap.
+      var wantDist = W.interior ? 5 : (p.inCar ? 13 + leadMag * 0.85 : (aiming ? 6.5 : 9));
+      var maxPull = clearCamDist(p.x, p.z, useYaw, wantDist); // probe from the PLAYER (never inside a wall), not the lead pivot
       camDist = Math.min(camDist, maxPull);                       // snap in
       camDist = Math.min(wantDist, camDist + (first ? 999 : 6 * dt)); // ease out
       var dist = camDist;
@@ -832,7 +834,7 @@
       camera.fov = clamp(curFOV, 40, 75); camera.updateProjectionMatrix();
       // --- orientation: chase raw (camYaw,camPitch) with a ~50ms spring (imperceptible lag,
       // kills mouse-jitter) so the lookAt is smooth while input/aim stays responsive ---
-      var kLook = first ? 1 : (1 - Math.exp(-20 * dt));
+      var kLook = (first || aiming) ? 1 : (1 - Math.exp(-20 * dt)); // instant/crisp while aiming, smoothed otherwise
       var yawD = ((useYaw - smoothYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       smoothYaw += yawD * kLook; smoothPitch += (camPitch - smoothPitch) * kLook;
       var cosP = Math.cos(smoothPitch), sinP = Math.sin(smoothPitch);
@@ -849,8 +851,11 @@
         camera.position.z += (Math.random() * 2 - 1) * amp;
       }
       camera.lookAt(camTarget);
+      camWasInCar = p.inCar;
     }
-    function lerpAngle(a, b, t) { var d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; return a + d * t; }
+    // shortest-arc lerp. Bias by +3π before the modulo so the operand is always non-negative
+    // (JS % keeps the sign of the dividend, which otherwise breaks the wrap past −π → long spin).
+    function lerpAngle(a, b, t) { var d = (((b - a) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI; return a + d * t; }
 
     /* ----------------------- Camera-accurate aiming ----------------------- */
     // The reticle is screen-center but bullets fire from the player along a yaw — with
@@ -1006,6 +1011,8 @@
           m._body.material.color.setHex(pd.cop ? 0x16203a : 0x6a1420);
           m._legL.rotation.set(0.25, 0, 0.18); m._legR.rotation.set(-0.15, 0, -0.30);
           m._armL.rotation.set(0.4, 0, 0.9); m._armR.rotation.set(-0.3, 0, -0.5);
+          // clear any leftover knee/elbow bend so a corpse's lower limbs lie straight
+          if (m._legL.children.length > 1) { m._legL.children[1].rotation.x = 0; m._legR.children[1].rotation.x = 0; m._armL.children[1].rotation.x = 0; m._armR.children[1].rotation.x = 0; }
           m._lx = null; m._lz = null; }
         else { m.visible = true; m.rotation.set(0, pd.yaw, 0); m._body.material.color.setHex(pd.hostile ? 0xff3b30 : pd.color);
           // scrub leftover dead-pose splay (pools reuse meshes) so the walk stays clean
