@@ -47,11 +47,12 @@ var DIR = path.resolve(__dirname, '..');
     W.player.inCar = false; W.player.x = (K.WATER_MARGIN + 2) * TILE; W.player.z = (K.WATER_MARGIN + 3) * TILE; W.player.y = 30;
     if (window.__setCam) window.__setCam(Math.PI * 1.25, 0.3); // face NW toward the bridge/bay
   });
-  // 3) downtown highrise from an elevated angle
+  // 3) downtown: stand at the base of the hero tower and look UP at the skyline
   var c = await shot('shot-sf-downtown.png', function (W, K, TILE) {
-    var dt = K.DOWNTOWN; W.player.inCar = false;
-    W.player.x = (dt.x0 - 3) * TILE; W.player.z = ((dt.z0 + dt.z1) / 2) * TILE; W.player.y = 40;
-    if (window.__setCam) window.__setCam(Math.PI * 0.5, 0.45); // face east into downtown from above
+    var ht = W._heroTowers ? W._heroTowers.sales : { x: K.MAP - 14, z: 14 };
+    W.player.inCar = false;
+    W.player.x = (ht.x - 4) * TILE; W.player.z = (ht.z + 3) * TILE; W.player.y = 0;
+    if (window.__setCam) window.__setCam(Math.PI * 1.4, -0.34); // look up toward the towers
   });
 
   console.log('SF_SHOTS ' + JSON.stringify({ a: a, b: b, c: c }) + ' errs=' + errs.length);
