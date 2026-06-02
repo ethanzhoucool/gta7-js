@@ -777,7 +777,9 @@
       else { playerG._lx = null; playerG._lz = null; }
 
       var i;
-      for (i = 0; i < W.cars.length; i++) { var c = W.cars[i]; var g = ensure(carPool, function () { return carMesh(0xffffff, false); }, i); syncCarGroup(g, c); if (g._lightbar) g._lightbar.visible = false; }
+      for (i = 0; i < W.cars.length; i++) { var c = W.cars[i]; var g = ensure(carPool, function () { return carMesh(0xffffff, true); }, i); syncCarGroup(g, c);
+        // stolen cruisers keep their flashing lightbar; every other car hides it
+        if (g._lightbar) { g._lightbar.visible = !!c.wasPolice; if (c.wasPolice) g._lightbar.material.color.setHex((Math.floor(W.time * 6) % 2) ? 0xff2e2e : 0x2e6bff); } }
       hideFrom(carPool, W.cars.length);
 
       for (i = 0; i < W.police.length; i++) { var pc = W.police[i]; var pg = ensure(policePool, function () { return carMesh(0x101820, true); }, i); syncCarGroup(pg, pc);

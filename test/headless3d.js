@@ -520,6 +520,30 @@ function run() {
     assert.ok(swat.length > 0 && swat[0].hp >= 100, 'a 5-star deploy produces a tougher SWAT officer');
   })();
 
+  // 9L) steal a police car: spawn a cruiser, pin it next to the player, commandeer it on foot
+  (function policeTheft() {
+      var pe = GTA3D.createEngine(), PW = pe.world, PIN = pe._internal;
+      for (var z = 0; z < pe.constants.MAP; z++) for (var x = 0; x < pe.constants.MAP; x++) PW.grid[z][x] = pe.constants.T_ROAD;
+      for (var pi = 0; pi < PW.peds.length; pi++) PW.peds[pi].alive = false;
+      PW.player.inCar = false; PW.playerCar = null; PW.player.x = 300; PW.player.z = 300; PW.wanted = 2; PW.lkpValid = true; PW.lkpX = 300; PW.lkpZ = 300;
+      for (var k = 0; k < 400 && PW.police.length === 0; k++) { PW.player.x = 300; PW.player.z = 300; PW.wanted = 2; pe.step(STEP, {}); }
+      assert.ok(PW.police.length > 0, 'a cruiser should be on the road to steal');
+      var cruiser = PW.police[0]; cruiser.x = 302; cruiser.z = 300; cruiser.vacant = false; cruiser.onFire = false; cruiser.exploded = false;
+      var copsBefore = PW.peds.filter(function (q) { return q.cop && q.alive; }).length;
+      var nPoliceBefore = PW.police.length, nCarsBefore = PW.cars.length;
+      PW.player.x = 300; PW.player.z = 300; PW.player.inCar = false;
+      PIN.tryEnterExit();
+      assert.ok(PW.player.inCar === true && PW.playerCar === cruiser, 'player is now driving the stolen cruiser');
+      assert.ok(PW.playerCar.wasPolice === true && PW.playerCar.driver === 'player', 'stolen car keeps its livery + is player-driven');
+      assert.ok(PW.police.indexOf(cruiser) < 0 && PW.police.length === nPoliceBefore - 1, 'cruiser left the police list');
+      assert.ok(PW.cars.indexOf(cruiser) >= 0 && PW.cars.length === nCarsBefore + 1, 'cruiser joined the drivable cars');
+      var copsAfter = PW.peds.filter(function (q) { return q.cop && q.alive; }).length;
+      assert.ok(copsAfter === copsBefore + 1, 'hijacking an occupied cruiser ejects its officer (' + copsBefore + '->' + copsAfter + ')');
+      // it stays driveable through a few steps without throwing / going non-finite
+      for (k = 0; k < 30; k++) { pe.step(STEP, { forward: true, aimYaw: 0 }); checkInvariants(pe, 'police-theft drive'); }
+      assert.ok(PW.player.inCar === true, 'still driving the cruiser after a short drive');
+    })();
+
   // 9k) SF map: bigger world, bay on three edges, water-tight grid, land-only spawns,
   //     downtown highrise zoning vs residential low-rise, scaled population.
   (function mapChecks() {

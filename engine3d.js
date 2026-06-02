@@ -1025,6 +1025,35 @@
       for (var i = 0; i < W.cars.length; i++) { var c = W.cars[i]; if (c.driver === 'player') continue; var d = d2(c.x, c.z, W.player.x, W.player.z); if (d < bd) { bd = d; best = c; } }
       return best;
     }
+    function nearestPoliceCar(maxD) {
+      var best = null, bd = maxD * maxD;
+      for (var i = 0; i < W.police.length; i++) { var c = W.police[i]; if (c.onFire || c.exploded) continue; var d = d2(c.x, c.z, W.player.x, W.player.z); if (d < bd) { bd = d; best = c; } }
+      return best;
+    }
+    // Commandeer a police cruiser: yank the officer out if it's occupied (a struggle), then
+    // move the car out of W.police into W.cars as your ride. Keeps its livery via wasPolice.
+    function stealPoliceCar(c) {
+      var occupied = !c.vacant;          // an officer is still driving it
+      if (occupied) {
+        var ox = c.x + Math.cos(c.yaw) * (CAR_HALF_W + 1.2);
+        var oz = c.z - Math.sin(c.yaw) * (CAR_HALF_W + 1.2);
+        if (circleHitsSolid(ox, oz, PLAYER_RADIUS)) { ox = c.x; oz = c.z; }
+        var cop = makeCopFoot(ox, oz, W.wanted >= 5);
+        cop.panic = 2; cop.yaw = Math.atan2(W.player.x - ox, W.player.z - oz);
+        W.peds.push(cop);
+      }
+      var idx = W.police.indexOf(c); if (idx >= 0) W.police.splice(idx, 1);
+      c.driver = 'player'; c.vacant = false; c.deployed = false; c.spotted = false;
+      c.steer = 0; c.wasPolice = true;   // renderer keeps the cruiser look + flashing lightbar
+      if (c.carHp === undefined || c.carHp <= 0) c.carHp = PCAR_HP;
+      W.cars.push(c); W.playerCar = c; W.player.inCar = true; W.player.car = c;
+      fx('jack', c.x, 1, c.z);
+      post('@you', occupied ? '🚓 Hijacked a cop car — they will NOT be happy.' : '🚓 Commandeered a police cruiser.');
+      // grand theft of a police vehicle draws heat (more if you fought a cop for it)
+      var sev = occupied ? CRIME.ASSAULT : CRIME.PETTY;
+      if (W.wanted >= 1) commitCrime(sev, c.x, c.z);
+      else alertPolice(occupied ? 2 : 1, c.x, c.z);
+    }
     function tryEnterExit() {
       var p = W.player;
       if (p.inCar) {
@@ -1037,6 +1066,9 @@
         return;
       }
       var c = nearestCar(4.5);
+      var pc = nearestPoliceCar(4.5);
+      // steal the cruiser if it's the closest stealable vehicle
+      if (pc && (!c || d2(pc.x, pc.z, p.x, p.z) < d2(c.x, c.z, p.x, p.z))) { stealPoliceCar(pc); return; }
       if (!c) return;
       var hadDriver = (c.driver === 'ai' || (c.npc && c.npc.inCar));
       if (hadDriver && c.npc) {
