@@ -57,6 +57,11 @@ var DIR = path.resolve(__dirname, '..');
     W.player.x = (ht.x - 4) * TILE; W.player.z = (ht.z + 4) * TILE; W.player.y = 0;
     if (window.__setCam) window.__setCam(Math.PI * 1.5, 0.5); // look up toward the towers
   });
+  // 4) a residential street, slight downward tilt to show the road + sidewalks + building bases
+  var d = await shot('shot-sf-street.png', function (W, K, TILE) {
+    W.player.inCar = false; W.player.x = 16 * TILE + 7; W.player.z = 56 * TILE + 7; W.player.y = 0; // SF SW grid
+    if (window.__setCam) window.__setCam(Math.PI * 0.5, -0.12); // look east down the street, slightly down
+  });
 
   console.log('SF_SHOTS ' + JSON.stringify({ a: a, b: b, c: c }) + ' errs=' + errs.length);
   if (errs.length) console.log('ERRS ' + JSON.stringify(errs.slice(0, 5)));

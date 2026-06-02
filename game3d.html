@@ -280,7 +280,7 @@
     var roads = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
       new THREE.MeshStandardMaterial({ color: 0xffffff, map: roadTex, roughness: 0.65, metalness: 0.08 }), nRoad);
     // parks
-    var parks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.25, TILE),
+    var parks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.84, 0.25, TILE * 0.84), // inset so the sidewalk shows
       new THREE.MeshStandardMaterial({ color: 0x2f5a2f, roughness: 0.9, metalness: 0.0 }), nPark);
     // buildings (height baked into per-instance scale; lit windows via emissive map; per-instance tint)
     var bldgs = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.84, 1, TILE * 0.84),
@@ -295,6 +295,11 @@
     var water = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
       new THREE.MeshStandardMaterial({ color: 0x2e6f8e, roughness: 0.25, metalness: 0.35, transparent: true, opacity: 0.92 }), nWater);
     water.receiveShadow = true;
+    // sidewalks: a light concrete pad filling each building/park tile; the building (0.84) and
+    // grass (0.84) sit inset on top, so a curb border shows between them and the road.
+    var sidewalks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.24, TILE),
+      new THREE.MeshStandardMaterial({ color: 0xb8b4ab, roughness: 0.95, metalness: 0.0 }), nBuild + nPark);
+    sidewalks.receiveShadow = true;
 
     var _bcol = new THREE.Color();
     function bhash(a, b) { var h = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return h - Math.floor(h); }
@@ -303,17 +308,19 @@
     var PASTEL = [0xEAD7C2, 0xD8E0C8, 0xCBD9E6, 0xEAD0D0, 0xE6D6B8, 0xD8CFE0, 0xCFE0DA, 0xF0E8DC];
     var GLASS = [0x5C7A99, 0x4A7A82, 0x6E8FB0];
     function inDowntown(xx, zz) { return DOWNTOWN && xx >= DOWNTOWN.x0 && xx < DOWNTOWN.x1 && zz >= DOWNTOWN.z0 && zz < DOWNTOWN.z1; }
-    var ri = 0, pi = 0, bi = 0, wi = 0;
+    var ri = 0, pi = 0, bi = 0, wi = 0, si = 0;
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var cx = x * TILE + TILE / 2, cz = z * TILE + TILE / 2, tt = W.grid[z][x];
       if (tt === K.T_ROAD) { m4.makeTranslation(cx, 0.1, cz); roads.setMatrixAt(ri++, m4); }
       else if (tt === TW) { m4.makeTranslation(cx, 0.05, cz); water.setMatrixAt(wi++, m4); }
       else if (tt === K.T_PARK) {
-        m4.makeTranslation(cx, 0.12, cz); parks.setMatrixAt(pi, m4);
-        m4.makeTranslation(cx, 1.2, cz); trunks.setMatrixAt(pi, m4);
-        m4.makeTranslation(cx, 4.4, cz); leaves.setMatrixAt(pi, m4);
+        m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);   // curb pad under the block
+        m4.makeTranslation(cx, 0.3, cz); parks.setMatrixAt(pi, m4);
+        m4.makeTranslation(cx, 1.4, cz); trunks.setMatrixAt(pi, m4);
+        m4.makeTranslation(cx, 4.6, cz); leaves.setMatrixAt(pi, m4);
         pi++;
       } else {
+        m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);   // curb pad the building rises from
         var hgt = W.buildingHeights[z][x];
         m4.makeScale(1, hgt, 1); m4.setPosition(cx, hgt / 2, cz);
         bldgs.setMatrixAt(bi, m4);
@@ -326,7 +333,7 @@
     }
     // frustumCulled=false: InstancedMesh derives its bounds from the base geometry
     // at the origin, so without this the whole city vanishes when you look away.
-    [roads, parks, bldgs, trunks, leaves, water].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
+    [roads, parks, bldgs, trunks, leaves, water, sidewalks].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
     if (bldgs.instanceColor) bldgs.instanceColor.needsUpdate = true;
     roads.receiveShadow = true; parks.receiveShadow = true;
     bldgs.castShadow = true; bldgs.receiveShadow = true;
