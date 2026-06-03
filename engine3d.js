@@ -1372,8 +1372,15 @@
         // wander along the STREET GRID: mostly keep going, sometimes pause, sometimes turn at a
         // corner. Cardinal headings (not random angles) keep peds walking the sidewalks naturally.
         p.think = rand(1.6, 3.6);
-        if (Math.random() < 0.14) p.speed = 0;                                        // pause on the sidewalk
-        else { p.speed = PED_WALK; p.dir = pickSidewalkDir(p); }                       // walk along a sidewalk street
+        var roll = Math.random();
+        if (roll < 0.12) {
+          // LOITER: stand on the sidewalk a while, turned to face the nearest storefront (window-shopping)
+          p.speed = 0; p.think = rand(4, 8);
+          var CD = [[0, 1], [1, 0], [0, -1], [-1, 0]], bh = p.dir, bg = 1e9;
+          for (var ci = 0; ci < 4; ci++) { var g = wallGap(p.x, p.z, CD[ci][0], CD[ci][1]); if (g < bg) { bg = g; bh = Math.atan2(CD[ci][0], CD[ci][1]); } }
+          if (bg < 80) p.dir = bh;
+        } else if (roll < 0.20) p.speed = 0;                                          // brief pause
+        else { p.speed = PED_WALK; p.dir = pickSidewalkDir(p); }                      // walk along a sidewalk street
       }
       if (p.speed > 0) {
         p.yaw = angTowards(p.yaw, p.dir, 8 * dt);                                      // smooth turn, no snapping
@@ -1394,6 +1401,8 @@
         // curb correction doesn't mask a wall ahead and leave the ped scraping along it).
         var movedF = (p.x - prevX) * fxp + (p.z - prevZ) * fzp;
         if (movedF < p.speed * dt * 0.35 && p.panic <= 0 && !p.hostile) p.dir = pickSidewalkDir(p); // blocked → pick a clear sidewalk heading
+      } else if (p.panic <= 0 && !p.hostile) {
+        p.yaw = angTowards(p.yaw, p.dir, 4 * dt); // loitering: still turn to face the storefront
       }
       return true;
     }
