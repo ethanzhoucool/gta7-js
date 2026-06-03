@@ -192,6 +192,8 @@
       vigilante: null, vigilanteCd: 0,                    // bounty-hunt loop
       rampage: null, rampagePads: [],                     // kill-streak challenge
       zones: [], ownedZones: 0,                           // gang turf
+      banks: [], heist: null, heistsDone: 0,              // bank-heist loop (the big score)
+      businesses: [], ownedBiz: [], bizVault: [], bizClock: 0, // buyable businesses + their collectable vaults
       weather: 'clear', weatherTimer: 0, timeOfDay: 0,    // day/night + weather (timeOfDay read by renderer)
       trauma: 0, milestones: {}                           // screen-shake signal + one-time unlock flags
     };
@@ -381,6 +383,21 @@
       { name: 'Marin Hideaway',     price: 9000,  income: 6,  tx: 30, tz: 10 },  // across the bridge (Marin)
       { name: 'Downtown Penthouse', price: 30000, income: 15, tx: 60, tz: 36 }   // SF downtown
     ];
+    // Banks you can rob (the heist loop). Hand-placed at landmark tiles; snapToStorefront mounts
+    // each on a building fronting a road so the entrance sits on the street.
+    var BANK_DEFS = [
+      { name: 'Maze Bank',        tx: 60, tz: 40 },  // downtown core
+      { name: 'Pacific Standard', tx: 34, tz: 50 }   // SF mid
+    ];
+    // Buyable businesses: bought at the broker, then they ACCRUE earnings into a vault you swing
+    // by to COLLECT (the active money loop, distinct from apartments' passive drip).
+    var BUSINESS_DEFS = [
+      { name: 'Pixel Arcade',        kind: 'arcade',     price: 9000,  income: 6,  tx: 64, tz: 60 },
+      { name: 'Cluckin Franchise',   kind: 'burgerjoint',price: 14000, income: 9,  tx: 30, tz: 58 },
+      { name: "Benny's Auto Shop",   kind: 'autoshop',   price: 22000, income: 13, tx: 22, tz: 46 },
+      { name: 'Vespucci Nightclub',  kind: 'nightclub',  price: 40000, income: 22, tx: 50, tz: 58 },
+      { name: 'Green Acres Grow-Op', kind: 'weedfarm',   price: 60000, income: 32, tx: 28, tz: 12 }  // Marin
+    ];
     // Shop catalogs: pure data + a pure effect fn(W). Price is deducted by buyItem.
     var SHOP_CATALOG = {
       gun: { name: 'Ammu-Nation', items: [
@@ -399,6 +416,7 @@
         { label: 'Repair / Respray', price: 150, apply: function () { if (W.playerCar) { W.playerCar.hp = 120; W.playerCar.color = choice(CAR_COLORS); if (W.wanted > 0 && !W.seen) { W.wanted--; W.lkpValid = false; } } } }
       ]},
       realty: { name: 'Dynasty 8 Real Estate', items: [] }, // filled from PROPERTY_DEFS at reset
+      biz: { name: 'Maze Bank Foreclosures', items: [] },   // filled from BUSINESS_DEFS at reset
       style: { name: 'Binco & Barber', items: [
         { label: 'New Outfit (shed heat)', price: 200, apply: function () { if (W.wanted > 0 && !W.seen) { W.wanted = Math.max(0, W.wanted - 1); W.lkpValid = false; W.searchTimer = 0; } } }
       ]},
@@ -429,7 +447,8 @@
       { type: 'diner',  tx: 24, tz: 44 },  // SF west-central
       { type: 'diner',  tx: 58, tz: 50 },  // SF mid
       { type: 'bar',    tx: 38, tz: 62 },  // SF Mission
-      { type: 'bar',    tx: 46, tz: 14 }   // Marin
+      { type: 'bar',    tx: 46, tz: 14 },  // Marin
+      { type: 'biz',    tx: 64, tz: 44 }   // business broker, downtown
     ];
 
     function snapToRoad(tx, tz) {
@@ -461,6 +480,19 @@
       SHOP_CATALOG.realty.items = PROPERTY_DEFS.map(function (d, i) {
         return { label: d.name, price: d.price, apply: function () { if (W.ownedProps.indexOf(i) < 0) W.ownedProps.push(i); if (W.homePropIndex == null) W.homePropIndex = i; } };
       });
+    }
+    function buildBizCatalog() {
+      SHOP_CATALOG.biz.items = BUSINESS_DEFS.map(function (d, i) {
+        return { label: d.name + ' (+$' + d.income + '/s)', price: d.price, apply: function () { if (W.ownedBiz.indexOf(i) < 0) { W.ownedBiz.push(i); W.bizVault[i] = 0; } } };
+      });
+    }
+    function placeBanks() {
+      W.banks = []; for (var i = 0; i < BANK_DEFS.length; i++) { var d = BANK_DEFS[i], p = snapToStorefront(d.tx, d.tz);
+        W.banks.push({ name: d.name, x: p.x, z: p.z, bx: p.bx, bz: p.bz, dirx: p.dirx, dirz: p.dirz, id: (W._id = (W._id || 0) + 1) }); }
+    }
+    function placeBusinesses() {
+      W.businesses = []; for (var i = 0; i < BUSINESS_DEFS.length; i++) { var d = BUSINESS_DEFS[i], p = snapToStorefront(d.tx, d.tz);
+        W.businesses.push({ name: d.name, kind: d.kind, price: d.price, income: d.income, x: p.x, z: p.z, bx: p.bx, bz: p.bz, dirx: p.dirx, dirz: p.dirz, id: (W._id = (W._id || 0) + 1) }); }
     }
     function placeShops() {
       W.shops = []; var i;
@@ -534,6 +566,7 @@
     function recomputeNetWorth() {
       var nw = W.money;
       for (var k = 0; k < W.ownedProps.length; k++) { var d = PROPERTY_DEFS[W.ownedProps[k]]; if (d) nw += d.price; }
+      for (var b = 0; b < W.ownedBiz.length; b++) { var bd = BUSINESS_DEFS[W.ownedBiz[b]]; if (bd) nw += bd.price; }
       var ct = CAR_TIERS[W.ownedCarTier]; if (ct) nw += ct.price;
       W.netWorth = nw;
     }
@@ -547,6 +580,70 @@
       // batch a rent notification every ~20s so property income is FELT, not silent
       W.rentClock = (W.rentClock || 0) + dt;
       if (W.rentClock >= 20 && W.rentBatch > 0) { post('@bank', '🏦 Rent collected: +$' + W.rentBatch); popCash(W.rentBatch); W.rentClock = 0; W.rentBatch = 0; }
+    }
+
+    /* ===================== BUSINESSES (buy + collect loop) ===================== */
+    // Owned businesses ACCRUE earnings into a per-business vault (capped), and you swing by on
+    // foot to COLLECT the lump — an active money loop distinct from apartments' passive rent drip.
+    var BIZ_COLLECT_R = 6, BIZ_VAULT_CAP_S = 280; // each vault caps at ~income * 280s of takings
+    function businessAccrue(dt) {
+      for (var k = 0; k < W.ownedBiz.length; k++) { var i = W.ownedBiz[k], d = BUSINESS_DEFS[i];
+        if (!d) continue; var cap = d.income * BIZ_VAULT_CAP_S;
+        W.bizVault[i] = Math.min(cap, (W.bizVault[i] || 0) + d.income * dt);
+      }
+    }
+    function collectBusiness() { // collect the vault of any owned business you're standing at (on foot)
+      if (W.player.inCar) return false;
+      for (var k = 0; k < W.ownedBiz.length; k++) { var i = W.ownedBiz[k], b = W.businesses[i];
+        if (!b) continue;
+        if (d2(b.x, b.z, W.player.x, W.player.z) < BIZ_COLLECT_R * BIZ_COLLECT_R) {
+          var amt = Math.floor(W.bizVault[i] || 0);
+          if (amt >= 1) { W.money += amt; popCash(amt); W.bizVault[i] = 0; post('@biz', '💼 ' + BUSINESS_DEFS[i].name + ' takings: +$' + amt); return true; }
+        }
+      }
+      return false;
+    }
+
+    /* ======================= BANK HEISTS (the big score) ======================= */
+    // Stand at a bank on foot and press rob to crack the vault (a few seconds, stay close). Cracking
+    // grabs a big score but jumps you to 4★ — then reach the getaway to bank it. Die and you lose it.
+    var HEIST_BANK_R = 7, HEIST_CRACK_TIME = 5.0, HEIST_DROP_R = 7, HEIST_DROP_MIN = 90, HEIST_DROP_MAX = 180;
+    function nearestBank(maxD) { var best = null, bd = maxD * maxD; for (var i = 0; i < W.banks.length; i++) { var b = W.banks[i]; var d = d2(b.x, b.z, W.player.x, W.player.z); if (d < bd) { bd = d; best = b; } } return best; }
+    function bankById(id) { for (var i = 0; i < W.banks.length; i++) if (W.banks[i].id === id) return W.banks[i]; return null; }
+    function heistReward() { return clamp(8000 + W.heistsDone * 4000 + randInt(0, 4000), 8000, 30000); }
+    function startHeist() { // returns true if it consumed the rob press (started/already cracking a bank)
+      if (W.player.inCar) return false;
+      if (W.heist) return W.heist.stage === 'rob';   // mid-crack: swallow the press, tickHeist drives it
+      var b = nearestBank(HEIST_BANK_R); if (!b) return false;
+      W.heist = { stage: 'rob', bankId: b.id, crack: 0, reward: heistReward() };
+      post('@you', '🏦 Cracking ' + b.name + ' — stay on the vault!');
+      return true;
+    }
+    function tickHeist(dt) {
+      var h = W.heist; if (!h) return;
+      if (h.stage === 'rob') {
+        var b = bankById(h.bankId);
+        if (!b || W.player.inCar || d2(b.x, b.z, W.player.x, W.player.z) > HEIST_BANK_R * HEIST_BANK_R) {
+          W.heist = null; post('@you', 'Vault job abandoned — get back on it to try again.'); return;
+        }
+        h.crack += dt;
+        if (h.crack >= HEIST_CRACK_TIME) {
+          var drop = roadNear(b.x, b.z, HEIST_DROP_MIN, HEIST_DROP_MAX) || randomRoad();
+          h.stage = 'escape'; h.dropX = drop.x; h.dropZ = drop.z;
+          alertPolice(4, b.x, b.z); W.seen = true;   // the heat is on, they know where you are
+          post('@you', '💰 Vault cracked — $' + h.reward + '! Reach the getaway with the loot!');
+          post('@LeonidaPD', 'Bank robbery at ' + b.name + '! All units respond. (' + W.wanted + '★)');
+        }
+      } else if (h.stage === 'escape') {
+        if (d2(h.dropX, h.dropZ, W.player.x, W.player.z) < HEIST_DROP_R * HEIST_DROP_R) {
+          var bonus = (W.wanted === 0) ? Math.round(h.reward * 0.3) : 0; // shook the cops first = cool bonus
+          var pay = h.reward + bonus;
+          W.money += pay; popCash(pay); W.heistsDone++;
+          post('@you', '🏆 Clean getaway! +$' + pay + (bonus ? ' (slipped the cops — bonus!)' : ''));
+          if (W.heistsDone >= 3) unlock('heistVet', 'Master thief — the city fears you. 🏦', function () {});
+          W.heist = null;
+        }
+      }
     }
     function makeGoals() {
       return [
@@ -820,17 +917,21 @@
       W.popups = [];
       W.job = null; W.jobCombo = 0; W.jobsDone = 0;
       W.vigilante = null; W.vigilanteCd = 0; W.vigilanteLevel = 0; W.vigilanteIdle = 0; W.rampage = null; W.rampagesDone = 0; W.ownedZones = 0;
+      W.ownedBiz = []; W.bizVault = []; W.bizClock = 0; W.heist = null; W.heistsDone = 0;
       W.weather = 'clear'; W.weatherTimer = rand(40, 90); W.timeOfDay = 0.3;
       buildRealtyCatalog();
+      buildBizCatalog();
       populate();
       placeShops();
       placeStores();
       placeDepots();
       placeZones();
+      placeBanks();
+      placeBusinesses();
       W.goals = makeGoals();
       spawnPlayer();
       post('@LeonidaPD', 'Welcome to Leonida. Try not to cause a scene. 🌴');
-      post('@you', 'Find shops [B], rob stores, buy cars & apartments. Build your empire.');
+      post('@you', 'Find shops [B], rob banks & stores [R], buy cars, homes & businesses. Build your empire.');
     }
 
     /* ----- wanted system ----- */
@@ -1561,6 +1662,7 @@
       // store cooldowns + passive income + live net worth/goals + weather run every tick (even dead)
       for (i = 0; i < W.stores.length; i++) if (W.stores[i].cooldown > 0) W.stores[i].cooldown -= dt;
       passiveIncome(dt);
+      businessAccrue(dt);   // owned businesses fill their vaults even while you're away
       recomputeNetWorth();
       checkGoals();
       updateWeather(dt);
@@ -1568,14 +1670,14 @@
 
       if (W.state === 'wasted') {
         W.respawnTimer -= dt; ageFeed(dt);
-        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
+        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; if (_hl) post('@you', 'Busted — lost the score.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
         return;
       }
       if (W.player.hp <= 0) { wasted(); return; }
 
       // edge actions handled by renderer via input.actionPressed etc.
       if (input.enterPressed) tryEnterExit();
-      if (input.robPressed && !W.player.inCar) { if (!robStore()) robNearest(); } // store robbery, else mug a ped
+      if (input.robPressed && !W.player.inCar) { if (!startHeist()) { if (!robStore()) robNearest(); } } // crack a bank vault, else rob a store, else mug a ped
       if (input.buyPressed) tryOpenOrBuy();
       if (input.cyclePressed) cycleShop();
       if (input.safehousePressed) enterSafehouse();
@@ -1595,6 +1697,10 @@
       tickVigilante(dt);
       tickRampage(dt);
       tickZones(dt);
+      tickHeist(dt);
+      // auto-collect a business vault when you're standing at one (throttled so it pays a lump, not per-frame)
+      W.bizClock = (W.bizClock || 0) + dt;
+      if (W.bizClock >= 1) { W.bizClock = 0; if (!W.player.inCar) collectBusiness(); }
 
       if (W.player.inCar) updatePlayerCar(dt, input);
       else updatePlayerFoot(dt, input);
@@ -1647,7 +1753,9 @@
         killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot, makeCopFoot: makeCopFoot,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,
-        WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed }
+        WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed,
+        startHeist: startHeist, tickHeist: tickHeist, nearestBank: nearestBank, collectBusiness: collectBusiness,
+        BUSINESS_DEFS: BUSINESS_DEFS, BANK_DEFS: BANK_DEFS }
     };
   }
 

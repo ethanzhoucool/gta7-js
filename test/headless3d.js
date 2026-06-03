@@ -707,6 +707,73 @@ function run() {
     assert.ok(FW.homePropIndex == null, 'homeless respawn leaves homePropIndex null (never invents a home)');
   })();
 
+  // 9p6) BANK HEISTS — crack a vault on foot (jumps heat to 4★ + sets a getaway), reach the drop to
+  //      bank a big score; dying mid-heist loses the loot. Abandoning by walking off cancels it.
+  (function heistChecks() {
+    var he = GTA3D.createEngine(), HW = he.world, IN = he._internal;
+    assert.ok(HW.banks.length >= 2, 'banks placed (' + HW.banks.length + ')');
+    HW.banks.forEach(function (b) { assert.ok(isFinite(b.x) && isFinite(b.z), 'bank has finite door'); });
+    // start the crack at bank 0
+    HW.player.inCar = false; HW.player.maxHp = 5000; HW.player.hp = 5000; HW.wanted = 0;
+    var b0 = HW.banks[0]; HW.player.x = b0.x; HW.player.z = b0.z;
+    assert.ok(IN.startHeist() === true, 'rob at a bank starts the vault crack');
+    assert.ok(HW.heist && HW.heist.stage === 'rob', 'heist is in the rob (cracking) stage');
+    assert.ok(HW.heist.reward >= 8000 && HW.heist.reward <= 30000, 'heist reward in range ($' + HW.heist.reward + ')');
+    var reward = HW.heist.reward;
+    // stand on the vault ~6s — crack completes, heat jumps, getaway set
+    for (var k = 0; k < 380; k++) he.step(STEP, {});
+    assert.ok(HW.heist && HW.heist.stage === 'escape', 'cracking the vault advances to the escape stage');
+    assert.ok(HW.wanted >= 4, 'cracking a bank floors heat to 4★ (got ' + HW.wanted + ')');
+    assert.ok(isFinite(HW.heist.dropX) && isFinite(HW.heist.dropZ), 'a getaway drop is set');
+    // reach the getaway with the cops shaken -> payout + bonus, heist clears
+    var m0 = HW.money; HW.wanted = 0; HW.player.x = HW.heist.dropX; HW.player.z = HW.heist.dropZ;
+    he.step(STEP, {});
+    assert.ok(HW.heist === null, 'reaching the getaway completes the heist');
+    assert.ok(HW.money >= m0 + reward, 'heist pays the score+bonus (' + m0 + ' -> ' + HW.money + ')');
+    assert.ok(HW.heistsDone === 1, 'heist counted');
+
+    // abandon: walking far from the vault mid-crack cancels the heist
+    var ae = GTA3D.createEngine(), AW = ae.world, AIN = ae._internal;
+    AW.player.inCar = false; AW.player.x = AW.banks[0].x; AW.player.z = AW.banks[0].z; AW.wanted = 0;
+    AIN.startHeist();
+    AW.player.x = AW.banks[0].x + 200; // walk off
+    ae.step(STEP, {});
+    assert.ok(AW.heist === null, 'leaving the vault abandons the heist');
+
+    // fail on death: die during the escape -> lose the loot, no payout
+    var de = GTA3D.createEngine(), DW = de.world, DIN = de._internal;
+    DW.player.inCar = false; DW.player.maxHp = 5000; DW.player.hp = 5000; DW.wanted = 0;
+    DW.player.x = DW.banks[0].x; DW.player.z = DW.banks[0].z;
+    DIN.startHeist();
+    for (var k2 = 0; k2 < 380; k2++) de.step(STEP, {});
+    assert.ok(DW.heist && DW.heist.stage === 'escape', 'reached escape before the death test');
+    var dm0 = DW.money; DW.player.hp = 0;
+    var sawW = false; for (var s = 0; s < 240; s++) { de.step(STEP, {}); if (DW.state === 'wasted') sawW = true; if (DW.state === 'play' && sawW) break; }
+    assert.ok(DW.heist === null, 'dying mid-heist clears the heist');
+    assert.ok(DW.heistsDone === 0 && DW.money < dm0 + 8000, 'dying mid-heist forfeits the score (no payout)');
+  })();
+
+  // 9p7) BUSINESSES — buy one, it accrues into a vault, and collecting on foot banks the takings.
+  (function bizChecks() {
+    var be = GTA3D.createEngine(), BW = be.world, IN = be._internal;
+    assert.ok(BW.businesses.length >= 5 && IN.shopCatalog('biz').items.length >= 5, 'businesses + broker catalog present');
+    // buy business 0
+    BW.player.inCar = false; BW.money = 99999; var nw0 = BW.netWorth;
+    assert.ok(IN.buyItem('biz', 0) === true && BW.ownedBiz.indexOf(0) >= 0, 'business 0 purchased');
+    be.step(STEP, {}); assert.ok(BW.netWorth > nw0, 'owning a business raises net worth');
+    // it accrues into its vault over time
+    BW.bizVault[0] = 0; for (var k = 0; k < 600; k++) be.step(STEP, {}); // ~10s
+    assert.ok(BW.bizVault[0] > 0, 'business accrues earnings into its vault (' + BW.bizVault[0].toFixed(0) + ')');
+    // collecting on foot at the business banks the lump and resets the vault
+    var biz0 = BW.businesses[0]; BW.player.x = biz0.x; BW.player.z = biz0.z; BW.player.inCar = false;
+    BW.bizVault[0] = 800; var bm0 = BW.money;
+    assert.ok(IN.collectBusiness() === true, 'collect succeeds at an owned business');
+    assert.ok(BW.money === bm0 + 800 && BW.bizVault[0] === 0, 'collecting banks the vault and resets it');
+    // can't collect from a car / when away
+    BW.bizVault[0] = 500; BW.player.x = biz0.x + 200;
+    assert.ok(IN.collectBusiness() === false, 'cannot collect when away from the business');
+  })();
+
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
   //     car recovers afterwards (doesn't spin out forever or go non-finite).
   (function driftCheck() {

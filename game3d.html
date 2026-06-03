@@ -437,7 +437,7 @@
     /* ----------------------- Storefronts + shop interiors ----------------- */
     // Each shop gets an awning + lit sign + doorway so it reads as a real store, mounted on
     // the building beside its door. Walk up and press F to step inside (see below).
-    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9, convenience: 0x6bf08a, diner: 0xffd23f, bar: 0xff6b9d, apartment: 0xffcf8a };
+    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9, convenience: 0x6bf08a, diner: 0xffd23f, bar: 0xff6b9d, apartment: 0xffcf8a, biz: 0xC9A227 };
     var storefrontGroup = new THREE.Group(); scene.add(storefrontGroup);
     (function buildStorefronts() {
       for (var s = 0; s < W.shops.length; s++) {
@@ -518,8 +518,704 @@
       })();
       return groups;
     }
+    function buildBanks() {
+      var groups = [];
+
+      // Shared materials (defined once, reused across all bank instances)
+      var MAT_STONE   = new THREE.MeshStandardMaterial({ color: 0xddd6c4, roughness: 0.82, metalness: 0.04 });
+      var MAT_STONE_D = new THREE.MeshStandardMaterial({ color: 0xc9c0ab, roughness: 0.88, metalness: 0.02 });
+      var MAT_MARBLE  = new THREE.MeshStandardMaterial({ color: 0xe8e2d4, roughness: 0.55, metalness: 0.06 });
+      var MAT_GOLD    = new THREE.MeshStandardMaterial({ color: 0xC9A227, roughness: 0.35, metalness: 0.85, emissive: 0xC9A227, emissiveIntensity: 0.30 });
+      var MAT_BRONZE  = new THREE.MeshStandardMaterial({ color: 0x4a3210, roughness: 0.55, metalness: 0.65, emissive: 0xC9A227, emissiveIntensity: 0.08 });
+      var MAT_SIGN    = new THREE.MeshStandardMaterial({ color: 0xC9A227, roughness: 0.30, metalness: 0.80, emissive: 0xC9A227, emissiveIntensity: 0.60 });
+
+      for (var i = 0; i < W.banks.length; i++) {
+        var b = W.banks[i];
+
+        var g = new THREE.Group();
+        g.frustumCulled = false;
+
+        // ── Footprint sizing (mirrors buildStorefronts / buildBuildingDetails conventions) ──
+        var tx = Math.floor(b.bx / TILE), tz = Math.floor(b.bz / TILE);
+        var fw = 0.80 + bhash(tx, tz) * 0.18, fd = 0.80 + bhash(tz + 1, tx + 2) * 0.18;
+        // bank occupies most of the tile — wider than a typical shop
+        var bldgW = TILE * 0.84 * fw;   // width across the facade (X in local space)
+        var bldgD = TILE * 0.84 * fd;   // depth away from road (Z in local space)
+
+        // Sizes tuned to produce a 16–20u tall neoclassical landmark
+        var podiumH   = 3.5;
+        var mainH     = 14.0;   // top of main block (above ground)
+        var totalH    = mainH;  // 14 u at roofline — pediment adds ~3 more → ~17 u total
+
+        // ────────────────────────────────────────────────────────────────
+        // 1. STONE PODIUM / STYLOBATE — raised base the building sits on
+        // ────────────────────────────────────────────────────────────────
+        var podium = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW + 1.0, podiumH, bldgD + 0.6),
+          MAT_STONE_D
+        );
+        podium.position.set(0, podiumH / 2, 0);
+        podium.castShadow = true;
+        podium.receiveShadow = true;
+        g.add(podium);
+
+        // ────────────────────────────────────────────────────────────────
+        // 2. MAIN BUILDING BLOCK — the tall stone body
+        // ────────────────────────────────────────────────────────────────
+        var mainBlock = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW, mainH, bldgD),
+          MAT_STONE
+        );
+        mainBlock.position.set(0, podiumH + mainH / 2, 0);
+        mainBlock.castShadow = true;
+        mainBlock.receiveShadow = true;
+        g.add(mainBlock);
+
+        // Slight recessed setback layer on top for a classical cornice shadow line
+        var cornice = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW + 0.7, 0.9, bldgD + 0.7),
+          MAT_STONE_D
+        );
+        cornice.position.set(0, podiumH + mainH - 0.45, 0);
+        cornice.castShadow = true;
+        g.add(cornice);
+
+        // ────────────────────────────────────────────────────────────────
+        // 3. FRONT STEPS — wide marble steps rising toward +z (road side)
+        //    Three tiers, each slightly narrower and higher than the one below
+        // ────────────────────────────────────────────────────────────────
+        var stepW = bldgW * 0.74;
+        var stepFaceZ = bldgD / 2;  // front face of the main block in local +z
+        for (var si = 0; si < 3; si++) {
+          var stepH = 0.38;
+          var stepD = 0.90;
+          var step = new THREE.Mesh(
+            new THREE.BoxGeometry(stepW - si * 0.8, stepH, stepD),
+            MAT_MARBLE
+          );
+          // step tiers fan out forward beyond the main block face
+          step.position.set(0, si * stepH + stepH / 2, stepFaceZ + (2 - si) * stepD + stepD / 2);
+          step.receiveShadow = true;
+          g.add(step);
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // 4. PORTICO COLUMNS — row of 5 fluted cylinders across the front
+        // ────────────────────────────────────────────────────────────────
+        var nCols       = 5;
+        var colH        = mainH * 0.72;      // columns ~72% of main block height
+        var colR        = 0.38;              // column radius
+        var porticoTopY = podiumH + colH;    // top of columns (world-local Y)
+        var colZ        = stepFaceZ + 0.22;  // columns sit just in front of the main face
+
+        var spacing = (bldgW * 0.72) / (nCols - 1);
+        var colStartX = -(bldgW * 0.72) / 2;
+        for (var ci = 0; ci < nCols; ci++) {
+          // Shaft — 8-segment cylinder approximates a fluted column cheaply
+          var col = new THREE.Mesh(
+            new THREE.CylinderGeometry(colR * 0.78, colR, colH, 8),
+            MAT_MARBLE
+          );
+          col.position.set(colStartX + ci * spacing, podiumH + colH / 2, colZ);
+          col.castShadow = true;
+          g.add(col);
+
+          // Capital (slightly wider disc at the top)
+          var cap = new THREE.Mesh(
+            new THREE.CylinderGeometry(colR * 1.15, colR * 0.82, 0.55, 8),
+            MAT_STONE_D
+          );
+          cap.position.set(colStartX + ci * spacing, porticoTopY - 0.28, colZ);
+          cap.castShadow = true;
+          g.add(cap);
+
+          // Base (plinth at the foot)
+          var base = new THREE.Mesh(
+            new THREE.CylinderGeometry(colR * 1.10, colR * 1.25, 0.45, 8),
+            MAT_STONE_D
+          );
+          base.position.set(colStartX + ci * spacing, podiumH + 0.23, colZ);
+          g.add(base);
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // 5. ENTABLATURE — horizontal beam across the top of the columns
+        // ────────────────────────────────────────────────────────────────
+        var entW = bldgW * 0.72 + colR * 2 + 0.6;
+        var entH = 1.2;
+        var entablature = new THREE.Mesh(
+          new THREE.BoxGeometry(entW, entH, 1.1),
+          MAT_STONE_D
+        );
+        entablature.position.set(0, porticoTopY + entH / 2 - 0.1, colZ - 0.05);
+        entablature.castShadow = true;
+        g.add(entablature);
+
+        // Thin frieze band (slightly lighter tone with subtle gold accent)
+        var friezeH = 0.55;
+        var frieze = new THREE.Mesh(
+          new THREE.BoxGeometry(entW + 0.06, friezeH, 1.05),
+          MAT_STONE
+        );
+        frieze.position.set(0, porticoTopY + entH + friezeH / 2 - 0.1, colZ - 0.05);
+        g.add(frieze);
+
+        // ────────────────────────────────────────────────────────────────
+        // 6. TRIANGULAR PEDIMENT — a 3-sided prism above the portico
+        //    Built as a low ConeGeometry(r, h, 3) rotated so one flat face
+        //    faces the road (+z); this gives the classic gable silhouette.
+        // ────────────────────────────────────────────────────────────────
+        var pedBaseW  = entW + 0.4;      // width at base matches entablature
+        var pedH      = 2.8;             // height of the triangle
+        var pedDepth  = 1.0;             // thin front-to-back slab thickness
+
+        // We build the pediment as a thin BoxGeometry sliced into a triangle
+        // by using a very flat ConeGeometry with 3 radial segments.
+        // radiusTop=0 (apex), radiusBottom computed so base spans pedBaseW.
+        // ConeGeometry(radiusBottom, height, 3): the 3 vertices of the base
+        // sit at angles 0, 120, 240 deg. We need the flat edge to face +z.
+        // The half-width of the flat edge = r * sin(60°) = r * sqrt(3)/2.
+        // So r = pedBaseW / sqrt(3).
+        var pedRadius = pedBaseW / Math.sqrt(3);
+        var pediment = new THREE.Mesh(
+          new THREE.ConeGeometry(pedRadius, pedH, 3),
+          MAT_STONE
+        );
+        var pedBaseY = porticoTopY + entH + friezeH - 0.1;
+        pediment.position.set(0, pedBaseY + pedH / 2, colZ - 0.05);
+        // Rotate 90° around X to lay the cone "on its side" so it becomes a gable
+        // shape facing the road — then spin around Y so the flat edge faces +z.
+        pediment.rotation.set(0, Math.PI / 6, 0);
+        pediment.castShadow = true;
+        g.add(pediment);
+
+        // ────────────────────────────────────────────────────────────────
+        // 7. SIGN BAND — gold emissive strip above the entrance door
+        // ────────────────────────────────────────────────────────────────
+        var signBandH = 1.1;
+        var signBandY = podiumH + mainH * 0.58;
+        var signBand = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW * 0.62, signBandH, 0.22),
+          MAT_SIGN
+        );
+        signBand.position.set(0, signBandY, bldgD / 2 + 0.12);
+        signBand.castShadow = false;
+        g.add(signBand);
+
+        // Gold trim strip directly under the sign band
+        var trimBar = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW * 0.62 + 0.6, 0.18, 0.22),
+          MAT_GOLD
+        );
+        trimBar.position.set(0, signBandY - signBandH / 2 - 0.09, bldgD / 2 + 0.12);
+        g.add(trimBar);
+
+        // ────────────────────────────────────────────────────────────────
+        // 8. BRONZE / GOLD DOUBLE DOORS
+        // ────────────────────────────────────────────────────────────────
+        var doorH  = 4.2;
+        var doorW  = 2.8;
+        var doorZ  = bldgD / 2 + 0.16;
+
+        // Door surround (gold frame)
+        var doorFrame = new THREE.Mesh(
+          new THREE.BoxGeometry(doorW + 0.6, doorH + 0.55, 0.28),
+          MAT_GOLD
+        );
+        doorFrame.position.set(0, podiumH + doorH / 2 + 0.28, doorZ - 0.02);
+        doorFrame.castShadow = false;
+        g.add(doorFrame);
+
+        // Left door panel
+        var doorL = new THREE.Mesh(
+          new THREE.BoxGeometry(doorW / 2 - 0.06, doorH, 0.22),
+          MAT_BRONZE
+        );
+        doorL.position.set(-doorW / 4 - 0.03, podiumH + doorH / 2 + 0.28, doorZ + 0.03);
+        g.add(doorL);
+
+        // Right door panel
+        var doorR = new THREE.Mesh(
+          new THREE.BoxGeometry(doorW / 2 - 0.06, doorH, 0.22),
+          MAT_BRONZE
+        );
+        doorR.position.set(doorW / 4 + 0.03, podiumH + doorH / 2 + 0.28, doorZ + 0.03);
+        g.add(doorR);
+
+        // ────────────────────────────────────────────────────────────────
+        // 9. GOLD TRIM ACCENTS — corner pilasters on the main block faces
+        // ────────────────────────────────────────────────────────────────
+        var pilasterW = 0.55, pilasterD = 0.30, pilasterH = mainH - 0.5;
+        var pilasterY = podiumH + pilasterH / 2;
+        var pilasterOffX = bldgW / 2 + 0.01;
+        [-1, 1].forEach(function (side) {
+          // Front-face corner pilasters
+          var pf = new THREE.Mesh(
+            new THREE.BoxGeometry(pilasterW, pilasterH, pilasterD),
+            MAT_STONE_D
+          );
+          pf.position.set(side * (bldgW / 2 - pilasterW / 2 + 0.01), pilasterY, bldgD / 2 + pilasterD / 2);
+          pf.castShadow = true;
+          g.add(pf);
+
+          // Gold capital accent on each pilaster
+          var pfCap = new THREE.Mesh(
+            new THREE.BoxGeometry(pilasterW + 0.12, 0.42, pilasterD + 0.14),
+            MAT_GOLD
+          );
+          pfCap.position.set(side * (bldgW / 2 - pilasterW / 2 + 0.01), podiumH + mainH - 0.21, bldgD / 2 + pilasterD / 2);
+          g.add(pfCap);
+        });
+
+        // ────────────────────────────────────────────────────────────────
+        // 10. ROOF PARAPET with gold top rail
+        // ────────────────────────────────────────────────────────────────
+        var parapet = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW + 0.3, 1.1, bldgD + 0.3),
+          MAT_STONE_D
+        );
+        parapet.position.set(0, podiumH + mainH + 0.55, 0);
+        parapet.castShadow = true;
+        g.add(parapet);
+
+        var parapetRail = new THREE.Mesh(
+          new THREE.BoxGeometry(bldgW + 0.5, 0.20, bldgD + 0.5),
+          MAT_GOLD
+        );
+        parapetRail.position.set(0, podiumH + mainH + 1.15, 0);
+        g.add(parapetRail);
+
+        // ────────────────────────────────────────────────────────────────
+        // 11. INLINE BEACON at the door point (b.x, b.z) — glowing gold
+        //     pillar + orb so the player can spot the bank from afar.
+        //     Inlined here (not calling addBeacon) for safe call-order.
+        // ────────────────────────────────────────────────────────────────
+        var beaconH    = 9;
+        var beaconCol  = 0xffcf3a;
+        var bGroup     = new THREE.Group();
+
+        var bPillar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.5, 0.5, beaconH, 8),
+          new THREE.MeshBasicMaterial({ color: beaconCol, transparent: true, opacity: 0.5, fog: false, toneMapped: false })
+        );
+        bPillar.position.y = beaconH / 2;
+        bGroup.add(bPillar);
+
+        var bOrb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.9, 10, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffe86a, fog: false, toneMapped: false })
+        );
+        bOrb.position.y = beaconH + 0.7;
+        bGroup.add(bOrb);
+
+        bGroup.position.set(b.x, 0, b.z);
+        scene.add(bGroup);
+        // NOTE: beacon is added directly to scene (not to g) so it stays at the
+        // door world position regardless of the group's rotation.
+
+        // ────────────────────────────────────────────────────────────────
+        // 12. ORIENT & PLACE the whole group
+        //     g.rotation.y = atan2(dirx, dirz) makes local +z face the road.
+        // ────────────────────────────────────────────────────────────────
+        g.position.set(b.bx, 0, b.bz);
+        g.rotation.y = Math.atan2(b.dirx, b.dirz);
+
+        scene.add(g);
+        groups.push(g);
+      }
+
+      return groups;
+    }
+    function buildBusinessFronts() {
+      var groups = [];
+
+      // Accent colours per kind
+      var BIZ_ACCENT = {
+        nightclub:  0xff00cc,
+        autoshop:   0xffcc00,
+        burgerjoint:0xff3300,
+        arcade:     0x00ffee,
+        weedfarm:   0x44ff44
+      };
+
+      for (var i = 0; i < W.businesses.length; i++) {
+        var biz = W.businesses[i];
+        var acc = BIZ_ACCENT[biz.kind] || 0xffd23f;
+
+        var dx = (biz.dirx || 0), dz = (biz.dirz != null ? biz.dirz : -1);
+        var bx = (biz.bx != null ? biz.bx : biz.x);
+        var bzc = (biz.bz != null ? biz.bz : biz.z);
+
+        // Match the bhash-varied footprint from the building loop so the facade sits
+        // flush on the actual scaled wall face (same formula as buildStorefronts).
+        var tx = Math.floor(bx / TILE), tz = Math.floor(bzc / TILE);
+        var fw = 0.80 + bhash(tx, tz) * 0.18, fd = 0.80 + bhash(tz + 1, tx + 2) * 0.18;
+        var halfFace = TILE * 0.42 * (Math.abs(dx) > 0.5 ? fw : fd); // half-depth toward road
+        var sw = TILE * 0.84 * (Math.abs(dx) > 0.5 ? fd : fw);        // facade width
+
+        // Position the Group on the wall face; local +Z points toward the road
+        var fx = bx + dx * halfFace, fz = bzc + dz * halfFace;
+        var yaw = Math.atan2(dx, dz);
+        var g = new THREE.Group();
+        g.position.set(fx, 0, fz);
+        g.rotation.y = yaw;
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Shared helpers — build a mesh in local space and add to g
+        // ─────────────────────────────────────────────────────────────────────────
+        function box(w, h, d, px, py, pz, mat, castSh) {
+          var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+          m.position.set(px, py, pz);
+          if (castSh) m.castShadow = true;
+          g.add(m);
+          return m;
+        }
+        function cyl(rt, rb, h, segs, px, py, pz, mat, castSh) {
+          var m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, segs), mat);
+          m.position.set(px, py, pz);
+          if (castSh) m.castShadow = true;
+          g.add(m);
+          return m;
+        }
+        function sph(r, segs, px, py, pz, mat) {
+          var m = new THREE.Mesh(new THREE.SphereGeometry(r, segs, segs), mat);
+          m.position.set(px, py, pz);
+          g.add(m);
+          return m;
+        }
+
+        // Common facade panel sits at z = 0 (flush with the wall)
+        var FACADE_Z = 0.16;
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // NIGHTCLUB — dark facade, magenta/cyan neon strips, velvet rope entrance
+        // ─────────────────────────────────────────────────────────────────────────
+        if (biz.kind === 'nightclub') {
+          var darkMat  = new THREE.MeshStandardMaterial({ color: 0x0a0010, roughness: 0.3, metalness: 0.6 });
+          var neonMag  = new THREE.MeshStandardMaterial({ color: 0xff00cc, emissive: 0xff00cc, emissiveIntensity: 1.4, roughness: 0.2 });
+          var neonCyan = new THREE.MeshStandardMaterial({ color: 0x00f8ff, emissive: 0x00f8ff, emissiveIntensity: 1.4, roughness: 0.2 });
+          var neonWhi  = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xeeeeff, emissiveIntensity: 0.9, roughness: 0.3 });
+          var chromeMat= new THREE.MeshStandardMaterial({ color: 0x888899, roughness: 0.15, metalness: 0.95 });
+          var ropeMat  = new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.8, metalness: 0.0 });
+
+          // Ground-floor facade panel
+          box(sw, 3.5, 0.3, 0, 1.75, FACADE_Z, darkMat, false);
+
+          // Marquee canopy (box marquee, not slanted awning)
+          var marqueeBack = new THREE.MeshStandardMaterial({ color: 0x110018, roughness: 0.35, metalness: 0.5, emissive: 0xff00cc, emissiveIntensity: 0.12 });
+          box(sw * 1.04, 1.1, 2.4, 0, 3.55, 1.2, marqueeBack, true);
+          // Neon strip along marquee front edge (magenta)
+          box(sw * 0.98, 0.12, 0.1, 0, 3.1, 2.35, neonMag, false);
+          box(sw * 0.98, 0.12, 0.1, 0, 4.05, 2.35, neonCyan, false);
+
+          // SIGN board above marquee
+          var signBg = new THREE.MeshStandardMaterial({ color: 0x0d001a, emissive: 0xff00cc, emissiveIntensity: 0.35, roughness: 0.3 });
+          box(sw * 0.90, 1.3, 0.28, 0, 5.35, 0.28, signBg, false);
+          // Sign letters — two neon bars that read as a bright sign panel
+          box(sw * 0.72, 0.22, 0.18, 0, 5.6,  0.42, neonMag, false);
+          box(sw * 0.60, 0.22, 0.18, 0, 5.15, 0.42, neonCyan, false);
+
+          // Door (double-height, dark glass)
+          var doorW = Math.min(2.4, sw * 0.38);
+          box(doorW, 3.2, 0.26, 0, 1.6, FACADE_Z + 0.16, new THREE.MeshStandardMaterial({ color: 0x08000f, emissive: 0xff00cc, emissiveIntensity: 0.22, roughness: 0.2, metalness: 0.5 }), false);
+          // Door frame chrome strips
+          box(0.1, 3.2, 0.15,  doorW / 2, 1.6, FACADE_Z + 0.22, chromeMat, false);
+          box(0.1, 3.2, 0.15, -doorW / 2, 1.6, FACADE_Z + 0.22, chromeMat, false);
+
+          // Velvet rope posts (two chrome cylinders + box rope between them)
+          var postH = 1.3;
+          cyl(0.07, 0.09, postH, 7, -1.6, postH / 2, 1.8, chromeMat, false);
+          cyl(0.07, 0.09, postH, 7,  1.6, postH / 2, 1.8, chromeMat, false);
+          // Rope (horizontal box between posts)
+          box(3.2, 0.07, 0.07, 0, postH * 0.72, 1.8, ropeMat, false);
+          // Rope guide caps
+          sph(0.12, 5, -1.6, postH, 1.8, chromeMat);
+          sph(0.12, 5,  1.6, postH, 1.8, chromeMat);
+
+          // Side neon strips down the facade edges
+          box(0.1, 3.5, 0.1, -sw / 2 + 0.06, 1.75, FACADE_Z + 0.06, neonCyan, false);
+          box(0.1, 3.5, 0.1,  sw / 2 - 0.06, 1.75, FACADE_Z + 0.06, neonMag,  false);
+
+          // Accent PointLight — purple/magenta club glow
+          var clubLight = new THREE.PointLight(0xdd00ff, 1.2, 10);
+          clubLight.position.set(0, 4.0, 2.5);
+          g.add(clubLight);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // AUTOSHOP — roll-up garage door, tyre stack, wrench sign, industrial look
+        // ─────────────────────────────────────────────────────────────────────────
+        else if (biz.kind === 'autoshop') {
+          var steelMat  = new THREE.MeshStandardMaterial({ color: 0x5a5a60, roughness: 0.55, metalness: 0.75 });
+          var concMat   = new THREE.MeshStandardMaterial({ color: 0x707070, roughness: 0.88, metalness: 0.05 });
+          var yellowMat = new THREE.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 0.55, roughness: 0.35 });
+          var darkSteel = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.5, metalness: 0.8 });
+          var tyreMat   = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.95, metalness: 0.0 });
+          var tyreRimMat= new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.3, metalness: 0.85 });
+
+          // Facade — concrete slab
+          box(sw, 4.5, 0.3, 0, 2.25, FACADE_Z, concMat, false);
+
+          // Roll-up garage door (multiple horizontal panels = stacked thin boxes)
+          var gdoorW = Math.min(4.8, sw * 0.58);
+          var doorMat = steelMat;
+          var panelH = 0.42, panelCount = 6;
+          for (var pd = 0; pd < panelCount; pd++) {
+            var panelMat = (pd % 2 === 0) ? steelMat : darkSteel;
+            box(gdoorW, panelH, 0.22, 0, panelH * pd + panelH / 2, FACADE_Z + 0.12, panelMat, false);
+          }
+          // Garage door frame (yellow safety strips)
+          box(0.18, panelH * panelCount + 0.2, 0.24, -gdoorW / 2 - 0.09, panelH * panelCount / 2, FACADE_Z + 0.12, yellowMat, false);
+          box(0.18, panelH * panelCount + 0.2, 0.24,  gdoorW / 2 + 0.09, panelH * panelCount / 2, FACADE_Z + 0.12, yellowMat, false);
+
+          // Awning — industrial corrugated-look (flat box over garage door + sign area)
+          var awnMat = new THREE.MeshStandardMaterial({ color: 0x444448, roughness: 0.7, metalness: 0.6 });
+          box(sw * 1.02, 0.5, 2.0, 0, 4.1, 1.0, awnMat, true);
+          // Yellow stripe on awning edge
+          box(sw * 1.02, 0.14, 0.14, 0, 3.87, 1.95, yellowMat, false);
+
+          // SIGN — wrench icon (two boxes forming a rough wrench shape) + bright backing
+          var signBgMat = new THREE.MeshStandardMaterial({ color: 0x0d0d0d, emissive: 0xffcc00, emissiveIntensity: 0.32, roughness: 0.4 });
+          box(sw * 0.88, 0.9, 0.28, 0, 5.15, 0.28, signBgMat, false);
+          // Wrench handle
+          box(0.6, 0.18, 0.2, -sw * 0.12, 5.12, 0.42, yellowMat, false);
+          // Wrench head (square block with notch illusion via two boxes)
+          box(0.32, 0.38, 0.2, -sw * 0.12 + 0.44, 5.12, 0.42, yellowMat, false);
+          // Triangle safety hazard mark
+          var triMat = new THREE.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 1.1, roughness: 0.25 });
+          box(0.5, 0.5, 0.15, sw * 0.22, 5.15, 0.42, triMat, false);
+
+          // Walk-in door (to the side of the garage door)
+          var wdoorX = -gdoorW / 2 - 1.2;
+          if (Math.abs(wdoorX) < sw / 2 - 0.5) {
+            box(0.9, 2.6, 0.24, wdoorX, 1.3, FACADE_Z + 0.14, darkSteel, false);
+          }
+
+          // Tyre stack — 3 stacked cylinders (rings) beside the door
+          var tyreX = gdoorW / 2 + 1.0;
+          if (tyreX < sw / 2 - 0.5) {
+            for (var ti = 0; ti < 3; ti++) {
+              cyl(0.55, 0.55, 0.32, 12, tyreX, 0.18 + ti * 0.34, FACADE_Z + 0.7, tyreMat, false);
+              cyl(0.32, 0.32, 0.36, 12, tyreX, 0.18 + ti * 0.34, FACADE_Z + 0.7, tyreRimMat, false);
+            }
+          }
+
+          // Accent PointLight — safety yellow
+          var shopLight = new THREE.PointLight(0xffe080, 1.2, 10);
+          shopLight.position.set(0, 3.5, 2.5);
+          g.add(shopLight);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // BURGERJOINT — red/yellow fast-food, big emissive burger sign, drive-thru awning
+        // ─────────────────────────────────────────────────────────────────────────
+        else if (biz.kind === 'burgerjoint') {
+          var redMat   = new THREE.MeshStandardMaterial({ color: 0xcc1100, roughness: 0.55, metalness: 0.15 });
+          var yellowBg = new THREE.MeshStandardMaterial({ color: 0xffcc00, roughness: 0.4, metalness: 0.1 });
+          var signRed  = new THREE.MeshStandardMaterial({ color: 0xff3300, emissive: 0xff3300, emissiveIntensity: 1.3, roughness: 0.2 });
+          var signYel  = new THREE.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffcc00, emissiveIntensity: 1.1, roughness: 0.2 });
+          var creamMat = new THREE.MeshStandardMaterial({ color: 0xfff5e0, roughness: 0.65, metalness: 0.0 });
+          var brownMat = new THREE.MeshStandardMaterial({ color: 0x5c3010, roughness: 0.75, metalness: 0.0 });
+          var greenMat = new THREE.MeshStandardMaterial({ color: 0x1a7a10, roughness: 0.75, metalness: 0.0 });
+
+          // Facade panel (cream fast-food exterior)
+          box(sw, 4.0, 0.3, 0, 2.0, FACADE_Z, creamMat, false);
+          // Red stripe band along bottom
+          box(sw, 0.55, 0.32, 0, 0.28, FACADE_Z, redMat, false);
+
+          // Drive-thru awning (wide, slanted, red with yellow trim)
+          var awnFastMat = new THREE.MeshStandardMaterial({ color: 0xcc0000, roughness: 0.6, metalness: 0.1 });
+          box(sw * 1.05, 0.45, 2.6, 0, 3.55, 1.3, awnFastMat, true);
+          box(sw * 1.05, 0.14, 0.12, 0, 3.33, 2.55, signYel, false); // yellow trim on awning edge
+          // Awning support struts
+          for (var as = -1; as <= 1; as += 2) {
+            box(0.1, 1.8, 2.5, as * (sw * 0.44), 2.8, 1.28, new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.5, metalness: 0.7 }), false);
+          }
+
+          // SIGN — big "burger" shape above awning: bun (top + bottom) + patty + lettuce
+          var signBoxW = Math.min(sw * 0.72, 5.5);
+          var signBaseY = 4.55;
+          // Bottom bun
+          var bunBot = new THREE.Mesh(new THREE.CylinderGeometry(signBoxW * 0.36, signBoxW * 0.42, 0.32, 12), brownMat);
+          bunBot.position.set(0, signBaseY, 0.38); g.add(bunBot);
+          // Patty
+          var patty = new THREE.Mesh(new THREE.CylinderGeometry(signBoxW * 0.34, signBoxW * 0.36, 0.22, 12),
+            new THREE.MeshStandardMaterial({ color: 0x3a1800, roughness: 0.9, metalness: 0.0 }));
+          patty.position.set(0, signBaseY + 0.28, 0.38); g.add(patty);
+          // Lettuce ring (green flattened torus-like box)
+          var lettuce = new THREE.Mesh(new THREE.CylinderGeometry(signBoxW * 0.38, signBoxW * 0.38, 0.12, 12), greenMat);
+          lettuce.position.set(0, signBaseY + 0.46, 0.38); g.add(lettuce);
+          // Top bun (emissive warm glow)
+          var bunTopMat = new THREE.MeshStandardMaterial({ color: 0x7a3800, emissive: 0xff8800, emissiveIntensity: 0.6, roughness: 0.7, metalness: 0.0 });
+          var bunTop = new THREE.Mesh(new THREE.CylinderGeometry(signBoxW * 0.22, signBoxW * 0.40, 0.36, 12), bunTopMat);
+          bunTop.position.set(0, signBaseY + 0.68, 0.38); g.add(bunTop);
+
+          // Emissive sign plaque behind burger
+          box(signBoxW * 1.05, 1.65, 0.2, 0, signBaseY + 0.45, 0.22,
+            new THREE.MeshStandardMaterial({ color: 0xff3300, emissive: 0xff3300, emissiveIntensity: 0.6, roughness: 0.3 }), false);
+
+          // Name-strip neon below burger sign
+          box(signBoxW * 0.88, 0.28, 0.2, 0, signBaseY - 0.26, 0.32, signYel, false);
+
+          // Door (centered, glass-look)
+          var bjDoor = Math.min(2.0, sw * 0.36);
+          box(bjDoor, 2.9, 0.24, 0, 1.45, FACADE_Z + 0.14,
+            new THREE.MeshStandardMaterial({ color: 0xccddcc, emissive: 0xffcc00, emissiveIntensity: 0.18, roughness: 0.15, metalness: 0.3 }), false);
+          // Door frame
+          box(bjDoor + 0.22, 0.14, 0.2, 0, 2.97, FACADE_Z + 0.16, redMat, false);
+
+          // Accent PointLight — warm fast-food orange
+          var bjLight = new THREE.PointLight(0xff9900, 1.2, 10);
+          bjLight.position.set(0, 3.8, 2.5);
+          g.add(bjLight);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // ARCADE — retro neon cyan/purple, pixel marquee, glowing cabinet hints
+        // ─────────────────────────────────────────────────────────────────────────
+        else if (biz.kind === 'arcade') {
+          var arcDarkMat = new THREE.MeshStandardMaterial({ color: 0x080010, roughness: 0.4, metalness: 0.5 });
+          var arcPurp    = new THREE.MeshStandardMaterial({ color: 0xaa00ff, emissive: 0xaa00ff, emissiveIntensity: 1.3, roughness: 0.2 });
+          var arcCyan    = new THREE.MeshStandardMaterial({ color: 0x00ffee, emissive: 0x00ffee, emissiveIntensity: 1.4, roughness: 0.2 });
+          var arcYel     = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 1.1, roughness: 0.2 });
+          var arcWhite   = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xeeffff, emissiveIntensity: 0.85, roughness: 0.3 });
+          var arcGlass   = new THREE.MeshStandardMaterial({ color: 0x050520, emissive: 0x0033aa, emissiveIntensity: 0.55, roughness: 0.15, metalness: 0.2 });
+
+          // Dark facade
+          box(sw, 4.2, 0.3, 0, 2.1, FACADE_Z, arcDarkMat, false);
+
+          // Marquee box (large, glowing)
+          var mqW = sw * 1.02;
+          box(mqW, 1.5, 0.55, 0, 5.05, 0.28,
+            new THREE.MeshStandardMaterial({ color: 0x0a0028, emissive: 0xaa00ff, emissiveIntensity: 0.28, roughness: 0.3 }), true);
+          // Pixel-row neon bars on marquee face (4 rows, alternating cyan/purple)
+          var pixColors = [arcCyan, arcPurp, arcYel, arcCyan];
+          for (var px = 0; px < 4; px++) {
+            box(mqW * 0.88, 0.13, 0.1, 0, 4.42 + px * 0.28, 0.56, pixColors[px], false);
+          }
+          // Marquee border trim
+          box(mqW + 0.1, 0.12, 0.1, 0, 4.33, 0.56, arcPurp, false);
+          box(mqW + 0.1, 0.12, 0.1, 0, 5.77, 0.56, arcCyan, false);
+          box(0.12, 1.5,  0.1, -mqW / 2 - 0.06, 5.05, 0.56, arcYel, false);
+          box(0.12, 1.5,  0.1,  mqW / 2 + 0.06, 5.05, 0.56, arcYel, false);
+
+          // Window panels (show glowing cabinet screens)
+          var winW = Math.min(2.2, sw * 0.28);
+          var winOffsets = [-sw * 0.3, sw * 0.3];
+          for (var wi = 0; wi < winOffsets.length; wi++) {
+            // Window frame
+            box(winW + 0.2, 2.1 + 0.2, 0.26, winOffsets[wi], 2.0, FACADE_Z + 0.1, arcDarkMat, false);
+            // Glass screen with emissive glow (alternating cyan/purple)
+            var cabMat = (wi === 0)
+              ? new THREE.MeshStandardMaterial({ color: 0x000522, emissive: 0x00ffee, emissiveIntensity: 0.65, roughness: 0.2 })
+              : new THREE.MeshStandardMaterial({ color: 0x0f0022, emissive: 0xaa00ff, emissiveIntensity: 0.65, roughness: 0.2 });
+            box(winW, 2.1, 0.22, winOffsets[wi], 2.0, FACADE_Z + 0.18, cabMat, false);
+            // Cabinet top trim
+            box(winW + 0.2, 0.14, 0.2, winOffsets[wi], 3.05, FACADE_Z + 0.14, arcCyan, false);
+          }
+
+          // Door (center)
+          var aDoorW = Math.min(1.8, sw * 0.28);
+          box(aDoorW, 3.0, 0.24, 0, 1.5, FACADE_Z + 0.14, arcGlass, false);
+          box(aDoorW + 0.18, 0.12, 0.18, 0, 3.06, FACADE_Z + 0.16, arcCyan, false);
+
+          // Neon side strips on facade
+          box(0.1, 4.2, 0.1, -sw / 2 + 0.08, 2.1, FACADE_Z + 0.07, arcPurp, false);
+          box(0.1, 4.2, 0.1,  sw / 2 - 0.08, 2.1, FACADE_Z + 0.07, arcCyan, false);
+
+          // Accent PointLight — electric cyan
+          var arcLight = new THREE.PointLight(0x00ddff, 1.2, 10);
+          arcLight.position.set(0, 4.2, 2.5);
+          g.add(arcLight);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // WEEDFARM — warehouse/greenhouse, green grow-light glow, leaf sign
+        // ─────────────────────────────────────────────────────────────────────────
+        else if (biz.kind === 'weedfarm') {
+          var whMat    = new THREE.MeshStandardMaterial({ color: 0x707868, roughness: 0.85, metalness: 0.12 });
+          var darkWh   = new THREE.MeshStandardMaterial({ color: 0x282e22, roughness: 0.8, metalness: 0.1 });
+          var glowGrn  = new THREE.MeshStandardMaterial({ color: 0x44ff44, emissive: 0x44ff44, emissiveIntensity: 1.3, roughness: 0.2 });
+          var dimGrn   = new THREE.MeshStandardMaterial({ color: 0x22aa22, emissive: 0x22aa22, emissiveIntensity: 0.55, roughness: 0.35 });
+          var growGlass= new THREE.MeshStandardMaterial({ color: 0x0a1a0a, emissive: 0x22ff00, emissiveIntensity: 0.72, roughness: 0.15, metalness: 0.05 });
+          var rustMat  = new THREE.MeshStandardMaterial({ color: 0x4a3c28, roughness: 0.9, metalness: 0.25 });
+
+          // Warehouse facade (corrugated steel look)
+          box(sw, 5.5, 0.3, 0, 2.75, FACADE_Z, whMat, false);
+          // Darker horizontal band across middle (corrugation shadow strips)
+          for (var cs = 0; cs < 5; cs++) {
+            box(sw, 0.06, 0.1, 0, 0.5 + cs * 1.0, FACADE_Z + 0.03, darkWh, false);
+          }
+
+          // Greenhouse windows — glowing green from grow lights inside
+          var gwW = Math.min(2.6, sw * 0.32);
+          var gwOffsets = [-sw * 0.28, sw * 0.28];
+          for (var gw = 0; gw < gwOffsets.length; gw++) {
+            // Window frame
+            box(gwW + 0.25, 2.3 + 0.25, 0.28, gwOffsets[gw], 2.2, FACADE_Z + 0.1, rustMat, false);
+            // Glass panel with green grow-light glow
+            box(gwW, 2.3, 0.22, gwOffsets[gw], 2.2, FACADE_Z + 0.2, growGlass, false);
+            // Window grid bars
+            box(0.08, 2.3, 0.15, gwOffsets[gw], 2.2, FACADE_Z + 0.24, rustMat, false);
+            box(gwW, 0.08, 0.15, gwOffsets[gw], 2.2, FACADE_Z + 0.24, rustMat, false);
+          }
+
+          // Awning / overhang (industrial flat canopy)
+          box(sw * 1.0, 0.38, 1.8, 0, 4.1, 0.9, darkWh, true);
+          // Green accent trim on awning edge
+          box(sw * 1.0, 0.1, 0.12, 0, 3.92, 1.78, dimGrn, false);
+
+          // SIGN — leaf shape made from a sphere + a diamond (box rotated) + backing
+          var signBgMat = new THREE.MeshStandardMaterial({ color: 0x0a1400, emissive: 0x22ff22, emissiveIntensity: 0.35, roughness: 0.4 });
+          box(sw * 0.85, 1.1, 0.25, 0, 5.3, 0.25, signBgMat, false);
+          // Leaf "blob" — flattened sphere
+          var leafMesh = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), glowGrn);
+          leafMesh.scale.set(1.0, 0.65, 0.35);
+          leafMesh.position.set(-sw * 0.14, 5.3, 0.5);
+          g.add(leafMesh);
+          // Stem (small box below leaf)
+          box(0.08, 0.32, 0.18, -sw * 0.14, 4.7, 0.5, glowGrn, false);
+          // Name-strip emissive line
+          box(sw * 0.62, 0.2, 0.15, sw * 0.1, 5.3, 0.42, dimGrn, false);
+
+          // Door — wide roll-up style (single slab, dark metal)
+          var wfDoorW = Math.min(2.0, sw * 0.34);
+          box(wfDoorW, 2.8, 0.26, 0, 1.4, FACADE_Z + 0.14, darkWh, false);
+          // Door frame accent
+          box(wfDoorW + 0.2, 0.12, 0.2, 0, 2.86, FACADE_Z + 0.16, dimGrn, false);
+
+          // Accent PointLight — lush green grow light
+          var growLight = new THREE.PointLight(0x44ff44, 1.2, 10);
+          growLight.position.set(0, 3.0, 2.5);
+          g.add(growLight);
+        }
+
+        // Catch-all: if kind is unknown, fall back to a generic bright facade
+        else {
+          box(sw, 3.4, 0.3, 0, 1.7, FACADE_Z,
+            new THREE.MeshStandardMaterial({ color: 0x101319, emissive: acc, emissiveIntensity: 0.18, roughness: 0.4, metalness: 0.3 }), false);
+          box(sw * 1.02, 0.4, 2.2, 0, 3.4, 1.2,
+            new THREE.MeshStandardMaterial({ color: acc, roughness: 0.7 }), true);
+          box(sw * 0.86, 1.0, 0.3, 0, 4.5, 0.28,
+            new THREE.MeshStandardMaterial({ color: acc, emissive: acc, emissiveIntensity: 0.55 }), false);
+          box(Math.min(2.2, sw * 0.45), 3.0, 0.25, 0, 1.5, 0.3,
+            new THREE.MeshStandardMaterial({ color: 0x05070b, emissive: acc, emissiveIntensity: 0.3 }), false);
+          var defLight = new THREE.PointLight(acc, 1.2, 10);
+          defLight.position.set(0, 3.5, 2.5);
+          g.add(defLight);
+        }
+
+        g.frustumCulled = false;
+        scene.add(g);
+        groups.push(g);
+      }
+
+      return groups;
+    }
     var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs, storefrontGroup];
     var _sfLM = buildSFLandmarks(); for (var _lmi = 0; _lmi < _sfLM.length; _lmi++) cityHideable.push(_sfLM[_lmi]);
+    var _bk = buildBanks(); for (var _bki = 0; _bki < _bk.length; _bki++) cityHideable.push(_bk[_bki]);
+    var _bz = buildBusinessFronts(); for (var _bzi = 0; _bzi < _bz.length; _bzi++) cityHideable.push(_bz[_bzi]);
 
     function buildBuildingDetails() {
       // ── Build a set of shop tile keys so we skip their plinth band ──────────
@@ -1213,7 +1909,7 @@
 
     // --- shop / store / safehouse beacons (placed once; shops are static after reset) ---
     // a tall glowing pillar + floating sign so the player can spot a destination from afar.
-    var SHOP_COL = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9 };
+    var SHOP_COL = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9, biz: 0xC9A227 };
     var beacons = []; // {mesh, baseY}
     function addBeacon(x, z, color, h) {
       var g = new THREE.Group();
@@ -1232,6 +1928,17 @@
       if (W.propPos) for (i = 0; i < W.propPos.length; i++) addBeacon(W.propPos[i].x, W.propPos[i].z, 0x6bf08a, 6);
       for (i = 0; i < W.jobDepots.length; i++) addBeacon(W.jobDepots[i].x, W.jobDepots[i].z, 0x39d3c0, 8);   // courier depots (teal)
       for (i = 0; i < W.zones.length; i++) addBeacon(W.zones[i].x, W.zones[i].z, 0x6a0d3a, 9);               // gang turf (magenta)
+      for (i = 0; i < W.businesses.length; i++) addBeacon(W.businesses[i].x, W.businesses[i].z, 0xC9A227, 6); // buyable businesses (gold)
+    })();
+
+    // reusable bright-green getaway marker, shown only during a heist escape (repositioned each frame)
+    var heistMarker = (function () {
+      var g = new THREE.Group();
+      var pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 16, 8), new THREE.MeshBasicMaterial({ color: 0x39d353, transparent: true, opacity: 0.5, fog: false, toneMapped: false }));
+      pillar.position.y = 8; g.add(pillar);
+      var orb = new THREE.Mesh(new THREE.SphereGeometry(1.0, 10, 8), new THREE.MeshBasicMaterial({ color: 0x39d353, fog: false, toneMapped: false }));
+      orb.position.y = 16.8; g.add(orb);
+      g.visible = false; scene.add(g); return g;
     })();
 
     // pools
@@ -1743,6 +2450,7 @@
         }
         if (IN.nearestProperty(6) >= 0) pr = (pr ? pr + '   ' : '') + '[H] Lie low (safehouse)';
         if (!W.job && IN.nearestDepot(6.5)) pr = (pr ? pr + '   ' : '') + '[J] Courier job';
+        if (!W.heist && IN.nearestBank && IN.nearestBank(7)) pr = '[R] Rob the bank 🏦';   // big-score prompt
       } else { pr = '[F] Exit vehicle'; if (!W.job && IN.nearestDepot(6.5)) pr += '   [J] Courier job'; }
       elPrompt.textContent = pr; elPrompt.style.display = pr ? 'block' : 'none';
 
@@ -1762,7 +2470,9 @@
 
       // active-loop status (job / rampage / vigilante) takes priority, else next goal
       var gtxt = '';
-      if (W.job) gtxt = '📦 Deliver — $' + W.job.base + '  ' + Math.max(0, Math.ceil(W.job.timeLeft)) + 's' + (W.jobCombo > 1 ? '  x' + W.jobCombo : '');
+      if (W.heist && W.heist.stage === 'rob') gtxt = '🏦 Cracking the vault… ' + Math.min(100, Math.round(W.heist.crack / 5.0 * 100)) + '%';
+      else if (W.heist && W.heist.stage === 'escape') gtxt = '🏃 Escape with $' + W.heist.reward + ' — reach the getaway!';
+      else if (W.job) gtxt = '📦 Deliver — $' + W.job.base + '  ' + Math.max(0, Math.ceil(W.job.timeLeft)) + 's' + (W.jobCombo > 1 ? '  x' + W.jobCombo : '');
       else if (W.rampage) gtxt = '🔫 RAMPAGE ' + (W.kills - W.rampage.kills0) + '/' + W.rampage.target + '  ' + Math.max(0, Math.ceil(W.rampage.timeLeft)) + 's';
       else if (W.vigilante) gtxt = '🎯 Hunt the fugitive — $' + W.vigilante.reward;
       else for (var gi = 0; gi < W.goals.length; gi++) if (!W.goals[gi].done) { gtxt = '🏆 ' + W.goals[gi].label + ' (+$' + W.goals[gi].reward + ')'; break; }
@@ -1822,6 +2532,10 @@
       if (W.propPos) { mctx.fillStyle = '#6bf08a'; for (i = 0; i < W.ownedProps.length; i++) { var pp = W.propPos[W.ownedProps[i]]; if (pp) mctx.fillRect(pp.x * sc - 2.5, pp.z * sc - 2.5, 5, 5); }
         // mark your HOME (respawn point) with a white ring so it stands out from other owned apartments
         if (W.homePropIndex != null && W.propPos[W.homePropIndex]) { var hp = W.propPos[W.homePropIndex]; mctx.strokeStyle = '#ffffff'; mctx.lineWidth = 1.5; mctx.strokeRect(hp.x * sc - 4, hp.z * sc - 4, 8, 8); } }
+      // banks (gold $) + buyable businesses (smaller gold), plus the heist getaway flag while escaping
+      mctx.fillStyle = '#C9A227'; for (i = 0; i < W.banks.length; i++) mctx.fillRect(W.banks[i].x * sc - 3, W.banks[i].z * sc - 3, 6, 6);
+      mctx.fillStyle = '#e8c24a'; for (i = 0; i < W.businesses.length; i++) mctx.fillRect(W.businesses[i].x * sc - 2, W.businesses[i].z * sc - 2, 4, 4);
+      if (W.heist && W.heist.stage === 'escape') { mctx.fillStyle = '#39d353'; mctx.beginPath(); mctx.arc(W.heist.dropX * sc, W.heist.dropZ * sc, 5, 0, 7); mctx.fill(); }
       mctx.fillStyle = '#3a7bff'; for (i = 0; i < W.police.length; i++) mctx.fillRect(W.police[i].x * sc - 2, W.police[i].z * sc - 2, 4, 4);
       mctx.fillStyle = '#ffd23f'; mctx.fillRect(W.player.x * sc - 2.5, W.player.z * sc - 2.5, 5, 5);
     }
@@ -1913,6 +2627,8 @@
       sky.position.copy(camera.position);
       sync(dt);
       for (var bi = 0; bi < beacons.length; bi++) beacons[bi]._orb.position.y = (beacons[bi].children[0].geometry.parameters.height) + 0.6 + Math.sin(W.time * 2 + bi) * 0.4;
+      if (W.heist && W.heist.stage === 'escape') { heistMarker.visible = true; heistMarker.position.set(W.heist.dropX, 0, W.heist.dropZ); heistMarker.children[1].position.y = 16.8 + Math.sin(W.time * 3) * 0.5; }
+      else if (heistMarker.visible) heistMarker.visible = false;
       updateHUD();
       if (started()) hintEl.style.display = 'none';
       renderer.render(scene, camera);

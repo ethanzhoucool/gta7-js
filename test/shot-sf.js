@@ -97,6 +97,23 @@ var DIR = path.resolve(__dirname, '..');
   });
 
   await page.evaluate(function () { var IN = window.__ENG._internal; if (window.__ENG.world.interior) IN.exitShop(); });
+  // 10) a BANK from across the street — should read as an imposing neoclassical bank (columns, pediment)
+  var bk = await shot('shot-sf-bank.png', function (W, K, TILE) {
+    var b = W.banks[0];
+    var dx = b.dirx || 0, dz = b.dirz != null ? b.dirz : -1;
+    var px = b.x + dx * 7 + (-dz) * 11, pz = b.z + dz * 7 + dx * 11; // stand off to the side in the street
+    W.player.inCar = false; W.player.x = px; W.player.z = pz; W.player.y = 0;
+    if (window.__setCam) window.__setCam(Math.atan2(b.bx - px, b.bz - pz), 0.18); // look up at the facade
+  });
+  // 11) a BUSINESS storefront (the nightclub) — themed neon facade
+  var bz = await shot('shot-sf-business.png', function (W, K, TILE) {
+    var biz = null; for (var i = 0; i < W.businesses.length; i++) if (W.businesses[i].kind === 'nightclub') biz = W.businesses[i];
+    if (!biz) biz = W.businesses[0];
+    var dx = biz.dirx || 0, dz = biz.dirz != null ? biz.dirz : -1;
+    var px = biz.x + dx * 5 + (-dz) * 8, pz = biz.z + dz * 5 + dx * 8;
+    W.player.inCar = false; W.player.x = px; W.player.z = pz; W.player.y = 0;
+    if (window.__setCam) window.__setCam(Math.atan2(biz.bx - px, biz.bz - pz), 0.1);
+  });
   // 9) INSIDE an owned apartment — should read as a furnished home (bed, sofa, TV, lamp), not a shop.
   // Clear any accumulated heat (this is the last shot; the live loop has run a while) and own the
   // apartment directly so the capture is deterministic.
