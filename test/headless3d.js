@@ -680,6 +680,18 @@ function run() {
     assert.strictEqual(cardinal, calm, 'peds walk on cardinal (street-grid) headings, not random angles');
   })();
 
+  // 9p2) peds walk the SIDEWALK/curb (hug building edges), not down the middle of the road.
+  (function pedSidewalk() {
+    var pe = GTA3D.createEngine(), PW = pe.world, C = pe.constants, i;
+    for (var k = 0; k < 600; k++) { PW.player.x = C.WORLD / 2; PW.player.z = C.WORLD / 2; pe.step(STEP, {}); } // wander a while (player idle, far)
+    function onCurb(x, z) { for (var t = 1; t <= 4; t++) for (var a = 0; a < 8; a++) { var ang = a * Math.PI / 4, tx = Math.floor((x + Math.cos(ang) * t) / C.TILE), tz = Math.floor((z + Math.sin(ang) * t) / C.TILE); if (PW.grid[tz] && PW.grid[tz][tx] === C.T_BUILDING) return true; } return false; }
+    var calm = 0, curb = 0;
+    for (i = 0; i < PW.peds.length; i++) { var p = PW.peds[i]; if (!p.alive || p.cop || p.gang !== undefined || p.panic > 0 || p.hostile) continue; calm++; if (onCurb(p.x, p.z)) curb++; assert.ok(finite(p.x) && finite(p.z), 'ped finite'); }
+    assert.ok(calm > 15, 'calm wandering peds exist (' + calm + ')');
+    // a healthy share hug the curb; the rest are legitimately crossing open intersections (this grid is road-heavy)
+    assert.ok(curb / calm >= 0.32, 'a healthy share of calm peds walk the sidewalk/curb (' + curb + '/' + calm + ')');
+  })();
+
   // 9q) bar drink buff: a SEPARATE temp damage factor (never corrupts the permanent gun
   //     upgrade or the rampage snapshot), decays over time, and clears on respawn.
   (function barBuffCheck() {

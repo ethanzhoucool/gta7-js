@@ -253,6 +253,42 @@
       }
       return { x: HALF, z: HALF + WATER_MARGIN * TILE }; // fallback lands on the southern land mass
     }
+    var CURB_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    var SIDEWALK_GAP = PLAYER_RADIUS + 1.0;   // how far off a building wall a ped stands (on the curb)
+    // distance to the nearest building wall in a perpendicular direction, or BIG if none nearby
+    function wallGap(px, pz, dx, dz) {
+      for (var t = 1.5; t <= 15; t += 1.0) { if (solidAt(px + dx * t, pz + dz * t)) return t; }
+      return 99;
+    }
+    // Pick a cardinal heading that runs ALONG a sidewalk (a building wall within ~6u to one side)
+    // and isn't blocked ahead, preferring to keep going straight — keeps peds off the road center.
+    function pickSidewalkDir(p) {
+      var cur = snapCardinal(p.dir), opts = [cur, cur + HALF_PI, cur - HALF_PI, cur + Math.PI];
+      var best = cur, bestScore = -1;
+      for (var i = 0; i < opts.length; i++) {
+        var d = opts[i], fx = Math.sin(d), fz = Math.cos(d), rx = Math.cos(d), rz = -Math.sin(d);
+        if (solidAt(p.x + fx * 2.2, p.z + fz * 2.2)) continue;                 // wall straight ahead — skip
+        var hasWall = (wallGap(p.x, p.z, rx, rz) < 6) || (wallGap(p.x, p.z, -rx, -rz) < 6);
+        var score = (hasWall ? 2 : 1) - i * 0.15;                              // prefer sidewalk streets, then current heading
+        if (score > bestScore) { bestScore = score; best = d; }
+      }
+      return snapCardinal(best);
+    }
+    // spawn a ped ON the sidewalk: a road tile bordering a building, offset to ~SIDEWALK_GAP off the wall
+    function curbSpawn() {
+      for (var i = 0; i < 400; i++) {
+        var tx = randInt(WATER_MARGIN + 1, MAP - WATER_MARGIN - 2), tz = randInt(WATER_MARGIN + 1, MAP - 2);
+        if (tileType(tx, tz) !== T_ROAD) continue;
+        for (var di = 0; di < 4; di++) {
+          var ex = CURB_DIRS[di][0], ez = CURB_DIRS[di][1];
+          if (tileType(tx + ex, tz + ez) === T_BUILDING) {
+            var cx = tx * TILE + TILE / 2, cz = tz * TILE + TILE / 2, off = TILE / 2 - SIDEWALK_GAP;
+            return { x: cx + ex * off, z: cz + ez * off };
+          }
+        }
+      }
+      return randomRoad();
+    }
     function roadNear(cx, cz, minD, maxD) {
       for (var i = 0; i < 140; i++) { var p = randomRoad(); var d = dist(p.x, p.z, cx, cz); if (d >= minD && d <= maxD) return p; }
       return null;
@@ -731,7 +767,7 @@
       var i, p;
       for (i = 0; i < NUM_TRAFFIC; i++) { p = randomRoad(); var c = makeCar(p.x, p.z, 'ai'); c.yaw = c.aiDir; c.npc = makePed(p.x, p.z, false); c.npc.inCar = true; W.cars.push(c); }
       for (i = 0; i < 14; i++) { p = randomRoad(); var pk = makeCar(p.x, p.z, null); pk.yaw = choice([0, Math.PI / 2, Math.PI, -Math.PI / 2]); W.cars.push(pk); }
-      for (i = 0; i < NUM_PEDS; i++) { p = randomRoad(); W.peds.push(makePed(p.x, p.z, Math.random() < 0.25)); }
+      for (i = 0; i < NUM_PEDS; i++) { p = curbSpawn(); W.peds.push(makePed(p.x, p.z, Math.random() < 0.25)); } // spawn on the sidewalk
       for (i = 0; i < 40; i++) { p = randomRoad(); W.pickups.push(makePickup(p.x, p.z, 'cash')); }
       for (i = 0; i < 10; i++) { p = randomRoad(); W.pickups.push(makePickup(p.x, p.z, 'health')); }
     }
@@ -1094,29 +1130,28 @@
         // wander along the STREET GRID: mostly keep going, sometimes pause, sometimes turn at a
         // corner. Cardinal headings (not random angles) keep peds walking the sidewalks naturally.
         p.think = rand(1.6, 3.6);
-        var r = Math.random();
-        if (r < 0.16) p.speed = 0;                                                    // pause on the sidewalk
-        else { p.speed = PED_WALK; if (r > 0.64) p.dir = snapCardinal(p.dir) + (Math.random() < 0.5 ? HALF_PI : -HALF_PI); }
-        p.dir = snapCardinal(p.dir);
+        if (Math.random() < 0.14) p.speed = 0;                                        // pause on the sidewalk
+        else { p.speed = PED_WALK; p.dir = pickSidewalkDir(p); }                       // walk along a sidewalk street
       }
       if (p.speed > 0) {
         p.yaw = angTowards(p.yaw, p.dir, 8 * dt);                                      // smooth turn, no snapping
         var fxp = Math.sin(p.dir), fzp = Math.cos(p.dir), rxp = Math.cos(p.dir), rzp = -Math.sin(p.dir);
-        // curb-hug: drift toward whichever side has buildings so peds walk the sidewalk edge,
-        // not down the middle of the road. Only when calmly wandering (not fleeing/charging).
-        var nudge = 0;
+        // SIDEWALK-FOLLOW: steer to hold ~SIDEWALK_GAP off the nearest building wall (the curb)
+        // so peds walk the building edge, not the middle of the road. Calm wanderers only.
+        var lat = 0;
         if (p.panic <= 0 && !p.hostile) {
-          if (solidAt(p.x + rxp * 20, p.z + rzp * 20)) nudge += 1;
-          if (solidAt(p.x - rxp * 20, p.z - rzp * 20)) nudge -= 1;
+          var gapR = wallGap(p.x, p.z, rxp, rzp), gapL = wallGap(p.x, p.z, -rxp, -rzp);
+          var side = (gapR < gapL) ? 1 : (gapL < gapR ? -1 : 0), gap = Math.min(gapR, gapL);
+          if (side !== 0 && gap < 90) lat = clamp(gap - SIDEWALK_GAP, -1, 1) * side * PED_WALK; // move toward/away to hold the curb
         }
-        var vx = fxp * p.speed + rxp * nudge * PED_WALK * 0.5;
-        var vz = fzp * p.speed + rzp * nudge * PED_WALK * 0.5;
+        var vx = fxp * p.speed + rxp * lat;
+        var vz = fzp * p.speed + rzp * lat;
         var prevX = p.x, prevZ = p.z;
         moveCircle(p, p.x + vx * dt, p.z + vz * dt, PLAYER_RADIUS);
         // turn 90° when FORWARD progress is blocked (measure forward only, so the sideways
-        // curb-nudge doesn't mask a wall ahead and leave the ped scraping along it).
+        // curb correction doesn't mask a wall ahead and leave the ped scraping along it).
         var movedF = (p.x - prevX) * fxp + (p.z - prevZ) * fzp;
-        if (movedF < p.speed * dt * 0.35 && p.panic <= 0 && !p.hostile) p.dir = snapCardinal(p.dir) + (Math.random() < 0.5 ? HALF_PI : -HALF_PI);
+        if (movedF < p.speed * dt * 0.35 && p.panic <= 0 && !p.hostile) p.dir = pickSidewalkDir(p); // blocked → pick a clear sidewalk heading
       }
       return true;
     }

@@ -354,6 +354,7 @@
     (function buildGoldenGate() {
       if (K.CHANNEL_Z0 == null) return;
       var ORANGE = new THREE.MeshStandardMaterial({ color: 0xC0362C, roughness: 0.55, metalness: 0.25 });
+      var DECK_MAT = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.85, metalness: 0.05 });
       var z0 = K.CHANNEL_Z0 * TILE, z1 = K.CHANNEL_Z1 * TILE;   // shores (world z 280..392)
       var xL = K.BRIDGE_X0 * TILE, xR = K.BRIDGE_X1 * TILE;     // deck edges (560..588)
       var xC = (xL + xR) / 2, span = z1 - z0;
@@ -375,9 +376,9 @@
         BRACES.forEach(function (b) { box(braceSpan - legWidthAt(b.y) + 0.3, b.h, b.d, xC, b.y, tz); });
       });
       // 2. main catenary cables each side + steep back-span anchors to the shore
-      var CABLE_TOP = TOWER_TOP - 2, CABLE_MID = 9, CD = 0.32;
+      var CABLE_TOP = TOWER_TOP - 3, CABLE_MID = 3.5, CD = 0.16;  // DEEP sag + thin cable (real GG read)
       function cableY(t) { var u = 2 * t - 1; return CABLE_MID + (CABLE_TOP - CABLE_MID) * u * u; }
-      var SEGS = 22;
+      var SEGS = 28;
       [LEG_XL, LEG_XR].forEach(function (cx) {
         for (var i = 0; i < SEGS; i++) {
           var za = z0 + span * (i / SEGS), zb = z0 + span * ((i + 1) / SEGS), ya = cableY(i / SEGS), yb = cableY((i + 1) / SEGS);
@@ -397,18 +398,22 @@
       [LEG_XL, LEG_XR].forEach(function (cx) {
         for (var z = z0 + 9; z < z1 - 4; z += 9) {
           if (z < z0 + 14 || z > z1 - 14) continue; // keep suspenders out of the tower bays
-          var yTop = cableY((z - z0) / span), susH = Math.max(0.4, yTop - 0.35);
-          var sus = new THREE.Mesh(new THREE.BoxGeometry(0.15, susH, 0.15), ORANGE);
-          sus.position.set(cx, 0.35 + susH / 2, z); ggGroup.add(sus);
+          var yTop = cableY((z - z0) / span), susH = Math.max(0.3, yTop - 0.15);
+          var sus = new THREE.Mesh(new THREE.BoxGeometry(0.10, susH, 0.10), ORANGE);
+          sus.position.set(cx, 0.15 + susH / 2, z); ggGroup.add(sus);
         }
       });
-      // 4. deck-edge railings + kick-plates (road tiles stay the drive surface)
+      // 4. VISIBLE deck slab (dark asphalt) under the road so the deck reads SOLID from the side,
+      //    not a floating set of rails. Top face ≈ y0 (just under the y=0.1 road tiles).
+      var slabW = (xR - xL) + 1.5, zMid = (z0 + z1) / 2;
+      var slab = new THREE.Mesh(new THREE.BoxGeometry(slabW, 0.7, span), DECK_MAT); slab.position.set(xC, -0.35, zMid); slab.receiveShadow = true; ggGroup.add(slab);
+      // 5. orange edge railings + kick-plates hugging the deck edges (clear of the driving lane)
       [xL, xR].forEach(function (xe) {
-        var rail = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.9, span), ORANGE); rail.position.set(xe, 0.55, (z0 + z1) / 2); rail.castShadow = true; ggGroup.add(rail);
-        var kick = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.28, span), ORANGE); kick.position.set(xe, 0.14, (z0 + z1) / 2); ggGroup.add(kick);
+        box(0.28, 0.9, span, xe, 0.35, zMid);   // railing
+        box(0.45, 0.22, span, xe, -0.04, zMid); // kick-plate
       });
-      // 5. deck cross-girders (just under the road) for side-on depth
-      for (var gz = z0; gz <= z1; gz += TILE) { var gd = new THREE.Mesh(new THREE.BoxGeometry((xR - xL) + 3, 0.45, 0.55), ORANGE); gd.position.set(xC, -0.18, gz); ggGroup.add(gd); }
+      // 6. underside cross-girders for structural silhouette
+      for (var gz = z0; gz <= z1; gz += TILE) { var gd = new THREE.Mesh(new THREE.BoxGeometry(slabW + 0.8, 0.5, 0.55), DECK_MAT); gd.position.set(xC, -0.72, gz); ggGroup.add(gd); }
       scene.add(ggGroup);
     })();
     // Embarcadero pier decks jutting from the SF shore into the strait (visual only)
