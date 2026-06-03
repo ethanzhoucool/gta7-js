@@ -1492,7 +1492,7 @@
       }
       var c = nearestCar(4.5);
       var pc = nearestPoliceCar(4.5);
-      var shop = nearestShop(3.6);
+      var shop = nearestShop(5.2);       // matches the on-screen prompt range so F always enters when prompted
       var homeI = nearestProperty(4.0);  // index of an OWNED apartment at the door, or -1
       // pick the closest interactable: enter home, walk into a shop, steal a cruiser, or grab a car
       var carD = c ? d2(c.x, c.z, p.x, p.z) : 1e9;

@@ -2887,7 +2887,7 @@
       var pr = '';
       if (!W.player.inCar) {
         var nc = IN.nearestCar(4.5); if (nc) pr = nc.npc ? '[F] Carjack' : '[F] Enter vehicle';
-        var ns = IN.nearestShop(5.5); if (ns && !W.currentShop) pr = '[B] Shop: ' + ns.name;
+        var ns = IN.nearestShop(5.5); if (ns && !W.currentShop) pr = '[F] Enter · [B] ' + ns.name;
         // F enters whichever interactable is CLOSEST (mirror tryEnterExit) so the prompt never lies:
         // only show "[F] Enter home" when the home door beats a nearby car.
         var homeI = IN.nearestProperty(4.0);
