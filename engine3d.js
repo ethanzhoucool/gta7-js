@@ -83,6 +83,16 @@
   // count ramps gradually per star instead of swarming instantly.
   var COP_AIM_WARMUP = 0.9, SWAT_AIM_WARMUP = 0.5;   // seconds of "freeze!" before a cop fires
   var CARS_BY_STAR = [0, 1, 2, 3, 4, 5];             // responding cruisers per wanted level (was wanted+1)
+  // Per-star police TIERS (indexed by wanted 1..5): liveries get darker/tougher, more cops pour out
+  // of each car, and the units get faster as heat climbs. 4★+ rolls SWAT; 5★ the armored FBI.
+  var POLICE_TIERS = [
+    null,
+    { kind: 'cruiser',     color: 0x1b2a4a, carHp: 120, topMul: 1.00, occupants: 1, swat: false }, // 1★ navy cruiser
+    { kind: 'cruiser',     color: 0x101820, carHp: 150, topMul: 1.06, occupants: 1, swat: false }, // 2★ cruiser
+    { kind: 'interceptor', color: 0x26303f, carHp: 175, topMul: 1.16, occupants: 2, swat: false }, // 3★ interceptor + partner
+    { kind: 'suv',         color: 0x14181f, carHp: 230, topMul: 1.00, occupants: 3, swat: true },   // 4★ SWAT van
+    { kind: 'fbi',         color: 0x0a0c12, carHp: 270, topMul: 1.22, occupants: 3, swat: true }    // 5★ armored FBI
+  ];
   // Vehicle damage (the player's car has its own HP, separate from the player).
   var PCAR_HP = 200;          // player car starts here; takes ram/crash/bullet damage
   // Helicopter (4★+): hovers above the player and fires down; killable.
@@ -186,6 +196,7 @@
       goals: [], netWorth: 0,
       // --- escalated law response ---
       helis: [], heliCd: 0,     // helicopters (4★+); SWAT are tougher foot cops at 5★
+      roadblockCd: 0,           // cooldown between 3★+ roadblocks
       // --- gameplay loops ---
       popups: [],               // floating +$N cash popups (renderer animates them)
       job: null, jobCombo: 0, jobsDone: 0, jobDepots: [], // courier/taxi fares
@@ -347,7 +358,14 @@
       p.aimWarmup = swat ? SWAT_AIM_WARMUP : COP_AIM_WARMUP; // telegraph timer before first shot
       return p;
     }
-    function makePolice(x, z) { var c = makeCar(x, z, 'police'); c.color = 0x101820; c.hp = 120; c.vacant = false; c.deployed = false; return c; }
+    function policeTier(w) { return POLICE_TIERS[clamp(w | 0, 1, 5)] || POLICE_TIERS[1]; }
+    function applyPoliceTier(c, w) {
+      var t = policeTier(w);
+      c.policeTier = clamp(w | 0, 1, 5); c.kind = t.kind; c.color = t.color;
+      c.hp = t.carHp; c.carHp = t.carHp; c.maxCarHp = t.carHp;
+      c.top = CAR_TOP * t.topMul; c.occupants = t.occupants; c.swat = t.swat;
+    }
+    function makePolice(x, z, wanted) { var c = makeCar(x, z, 'police'); c.vacant = false; c.deployed = false; applyPoliceTier(c, wanted || W.wanted || 1); return c; }
     function makeBullet(x, y, z, dx, dy, dz, team, dmg) {
       var l = Math.hypot(dx, dy, dz) || 1;
       return { x: x, y: y, z: z, vx: dx / l * BULLET_SPEED, vy: dy / l * BULLET_SPEED, vz: dz / l * BULLET_SPEED, life: BULLET_LIFE, team: team, dmg: dmg || BULLET_DMG };
@@ -667,8 +685,8 @@
       { text: '🎮 Move with W A S D (or the arrow keys)', ok: function (t) { return dist(W.player.x, W.player.z, t.startX, t.startZ) > 12; } },
       { text: '🚗 Walk up to a car and press F to get in — then drive', ok: function (t) { return t.everDrove; } },
       { text: '🚪 On foot, press B at a shop to open it, or F to step inside', ok: function () { return !!W.currentShop || !!W.interior; } },
-      { text: '💵 Make money: press J for a courier job, or R to rob a store', ok: function () { return W.money > 0 || !!W.job || W.jobsDone > 0; } },
-      { text: '🏦 Big score: press R at a bank to crack the vault. You’re ready!', ok: function () { return !!W.heist || W.heistsDone > 0; } }
+      { text: '💵 Make money: press J for a courier job, or E to rob a store', ok: function () { return W.money > 0 || !!W.job || W.jobsDone > 0; } },
+      { text: '🏦 Big score: press E at a bank to crack the vault. You’re ready!', ok: function () { return !!W.heist || W.heistsDone > 0; } }
     ];
     function startTutorial() { W.tutorial = { i: 0, startX: W.player.x, startZ: W.player.z, everDrove: false, text: TUT[0].text }; post('@tip', TUT[0].text); }
     function tickTutorial() {
@@ -714,10 +732,13 @@
         if (sp.weapon && p.weapons[sp.weapon]) p.weapon = sp.weapon;
       }
       W.ownedCarTier = Math.max(0, Math.min(CAR_TIERS.length - 1, W.ownedCarTier));
-      // respawn the courtesy car at the restored tier, and stand at home if one is owned
-      if (W.playerCar) applyCarTier(W.playerCar, W.ownedCarTier);
+      // stand at home if one is owned
       var hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : -1;
       if (hi >= 0 && W.propPos && W.propPos[hi]) { W.player.x = W.propPos[hi].x; W.player.z = W.propPos[hi].z; }
+      // bring the courtesy car to the player and re-tier it to the restored tier (spawnPlayer made a
+      // tier-0 beater because ownedCarTier was 0 at world creation — fix it up to what was saved).
+      var court = null; for (var ci = 0; ci < W.cars.length; ci++) { var cc = W.cars[ci]; if (cc.driver == null && !cc.wasPolice && !cc.npc && !cc.exploded) { court = cc; break; } }
+      if (court) { applyCarTier(court, W.ownedCarTier); var cp = roadNear(W.player.x, W.player.z, 4, 12); if (cp) { court.x = cp.x; court.z = cp.z; } }
       recomputeNetWorth();
       post('@you', 'Save loaded — welcome back. Net worth $' + W.netWorth.toLocaleString('en-US'));
       return true;
@@ -975,7 +996,7 @@
       W.money = 0; W.kills = 0; W.fireCd = 0; W.feed = [];
       // economy reset
       W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.ownedProps = []; W.homePropIndex = null; W.incomeAccrued = 0; W.netWorth = 0;
-      W.helis = []; W.heliCd = 0;
+      W.helis = []; W.heliCd = 0; W.roadblockCd = 0;
       // gameplay-loop reset
       W.popups = [];
       W.job = null; W.jobCombo = 0; W.jobsDone = 0;
@@ -994,7 +1015,7 @@
       W.goals = makeGoals();
       spawnPlayer();
       post('@LeonidaPD', 'Welcome to Leonida. Try not to cause a scene. 🌴');
-      post('@you', 'Find shops [B], rob banks & stores [R], buy cars, homes & businesses. Build your empire.');
+      post('@you', 'Find shops [B], rob banks & stores [E], buy cars, homes & businesses. Build your empire.');
     }
 
     /* ----- wanted system ----- */
@@ -1587,8 +1608,11 @@
       if (W.police.length < want && (W.time % 0.7) < dt) {
         var sx = W.lkpValid ? W.lkpX : W.player.x, sz = W.lkpValid ? W.lkpZ : W.player.z;
         // spawn OUTSIDE sight range (> POLICE_SIGHT) so cruisers never pop into view
-        var sp = roadNear(sx, sz, POLICE_SIGHT + 20, 200); if (sp) W.police.push(makePolice(sp.x, sp.z));
+        var sp = roadNear(sx, sz, POLICE_SIGHT + 20, 200); if (sp) W.police.push(makePolice(sp.x, sp.z, W.wanted));
       }
+      // roadblocks punctuate a 3★+ car chase
+      if (W.roadblockCd > 0) W.roadblockCd -= dt;
+      if (W.wanted >= 3 && W.player.inCar && (W.roadblockCd || 0) <= 0) spawnRoadblock();
       W.seen = false;
       for (var i = W.police.length - 1; i >= 0; i--) {
         var c = W.police[i];
@@ -1612,16 +1636,44 @@
       for (var i = W.peds.length - 1; i >= 0; i--) { var q = W.peds[i]; if (q.cop && (corpsesToo || q.alive)) W.peds.splice(i, 1); }
     }
     function deployOfficer(c) {
-      var ox = c.x + Math.cos(c.yaw) * (CAR_HALF_W + 1.0);
-      var oz = c.z - Math.sin(c.yaw) * (CAR_HALF_W + 1.0);
-      if (circleHitsSolid(ox, oz, PLAYER_RADIUS)) { ox = c.x; oz = c.z; }
-      var swat = W.wanted >= 5;                 // 5★ brings out SWAT
-      var cop = makeCopFoot(ox, oz, swat);
-      cop.yaw = Math.atan2(W.player.x - ox, W.player.z - oz);
-      W.peds.push(cop);
+      var n = c.occupants || 1, swat = c.swat || W.wanted >= 5;   // each tier dumps its full crew
+      for (var k = 0; k < n; k++) {
+        var ang = c.yaw + (k - (n - 1) / 2) * 0.5;
+        var ox = c.x + Math.cos(ang) * (CAR_HALF_W + 1.0 + k * 0.3);
+        var oz = c.z - Math.sin(ang) * (CAR_HALF_W + 1.0 + k * 0.3);
+        if (circleHitsSolid(ox, oz, PLAYER_RADIUS)) { ox = c.x; oz = c.z; }
+        var cop = makeCopFoot(ox, oz, swat);
+        cop.yaw = Math.atan2(W.player.x - ox, W.player.z - oz);
+        W.peds.push(cop);
+      }
       c.vacant = true; c.deployed = true; c.speed *= 0.2; c.vx *= 0.2; c.vz *= 0.2;
       fx('jack', c.x, 1, c.z);
-      if (swat) post('@LeonidaPD', 'SWAT deployed. 🚨');
+      if (swat) post('@LeonidaPD', (n > 1 ? n + ' ' : '') + 'SWAT deployed. 🚨');
+    }
+    // Roadblock (3★+): drop a couple of vacant cruisers broadside across a road ahead of the
+    // player's heading, with a few cops manning it. Cooldown-gated so it punctuates a chase.
+    var ROADBLOCK_CD = 25;
+    function spawnRoadblock() {
+      if (W.wanted < 3 || (W.roadblockCd || 0) > 0) return false;
+      var p = W.player, hx = p.vx, hz = p.vz, hl = Math.hypot(hx, hz);
+      if (hl < 0.5) { hx = Math.sin(p.yaw); hz = Math.cos(p.yaw); hl = 1; }
+      hx /= hl; hz /= hl;
+      var spot = roadNear(p.x + hx * 60, p.z + hz * 60, 25, 75) || roadNear(p.x, p.z, 40, 90);
+      if (!spot) return false;
+      var blockYaw = Math.atan2(p.x - spot.x, p.z - spot.z) + Math.PI / 2; // broadside to the approach
+      for (var k = 0; k < 2; k++) {
+        var car = makePolice(spot.x + (k ? 5.5 : -5.5), spot.z, W.wanted);
+        car.vacant = true; car.deployed = true; car.yaw = blockYaw; car.speed = 0;
+        W.police.push(car);
+      }
+      var n = W.wanted >= 4 ? 3 : 2;
+      for (var j = 0; j < n; j++) {
+        var cop = makeCopFoot(spot.x + (j - (n - 1) / 2) * 1.8, spot.z + 1.5, W.wanted >= 4);
+        cop.yaw = Math.atan2(p.x - cop.x, p.z - cop.z); W.peds.push(cop);
+      }
+      W.roadblockCd = ROADBLOCK_CD;
+      post('@LeonidaPD', 'Roadblock ahead! 🚧');
+      return true;
     }
 
     /* ----- helicopter (4★+) ----- */
@@ -1820,7 +1872,8 @@
         WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed,
         startHeist: startHeist, tickHeist: tickHeist, nearestBank: nearestBank, collectBusiness: collectBusiness,
         BUSINESS_DEFS: BUSINESS_DEFS, BANK_DEFS: BANK_DEFS,
-        serializeSave: serializeSave, applySave: applySave, startTutorial: startTutorial }
+        serializeSave: serializeSave, applySave: applySave, startTutorial: startTutorial,
+        makePolice: makePolice, applyPoliceTier: applyPoliceTier, deployOfficer: deployOfficer, spawnRoadblock: spawnRoadblock, POLICE_TIERS: POLICE_TIERS, policeTier: policeTier }
     };
   }
 

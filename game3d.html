@@ -2143,6 +2143,7 @@
     var menuEl = document.getElementById('menu'), tutEl = document.getElementById('tut');
     function started() { return gameStarted; }
     function startGame(load) {
+      if (gameStarted) return;   // idempotent: never re-apply a save / restart the tutorial mid-game
       if (load) { var s = loadSaveObj(); if (s) IN.applySave(s); }
       else { clearSave(); if (IN.startTutorial) IN.startTutorial(); }
       gameStarted = true;

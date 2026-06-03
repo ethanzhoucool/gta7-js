@@ -802,6 +802,44 @@ function run() {
     var sx = TW.player.x; TW.player.x = sx + 40;   // "move"
     te.step(STEP, {});
     assert.ok(!TW.tutorial || TW.tutorial.i >= 1, 'tutorial advances past the move step after travelling');
+    // loading a save with an owned car tier hands the player that car (not a beater) at home
+    var ce = GTA3D.createEngine(), CW = ce.world, CIN = ce._internal;
+    CW.player.inCar = false; CW.money = 99999; CIN.buyItem('car', 1); // Sports (catalog idx 1) -> ownedCarTier 2
+    var carSnap = JSON.parse(JSON.stringify(CIN.serializeSave()));
+    var ge = GTA3D.createEngine(), GW = ge.world, GIN = ge._internal;
+    GIN.applySave(carSnap);
+    assert.strictEqual(GW.ownedCarTier, 2, 'owned car tier restored');
+    var courtesy = GW.cars.filter(function (c) { return c.driver == null && !c.wasPolice && !c.npc; });
+    assert.ok(courtesy.some(function (c) { return c.tier === 2; }), 'loaded game hands over the owned-tier courtesy car, not a beater');
+  })();
+
+  // 9p5) POLICE TIERS + ROADBLOCKS — heat escalates the responding unit (livery/HP/crew), and 3★+
+  //      car chases get punctuated by roadblocks.
+  (function policeChecks() {
+    var pe = GTA3D.createEngine(), PW = pe.world, PIN = pe._internal;
+    // tier stamping by wanted level
+    var t1 = PIN.makePolice(100, 100, 1), t4 = PIN.makePolice(100, 100, 4), t5 = PIN.makePolice(100, 100, 5);
+    assert.ok(t1.occupants === 1 && t1.swat === false, '1★ cruiser: lone, non-SWAT');
+    assert.ok(t4.swat === true && t4.occupants >= 3 && t4.hp > t1.hp, '4★ SWAT van: bigger crew, tougher');
+    assert.ok(t5.hp >= t4.hp && t5.top > t1.top, '5★ FBI: toughest + fastest');
+    // deploying a tiered car dumps its whole crew with the right SWAT flag
+    PW.peds = PW.peds.filter(function (q) { return !q.cop; });
+    PW.wanted = 4; var car = PIN.makePolice(PW.player.x + 6, PW.player.z, 4);
+    PIN.deployOfficer(car);
+    var cops = PW.peds.filter(function (q) { return q.cop; });
+    assert.ok(cops.length >= 3 && cops.every(function (q) { return q.swat; }), 'SWAT van deploys 3 SWAT officers');
+    // roadblock at 3★ in a car: places vacant cruisers + cops near a road, then clears with heat
+    var re = GTA3D.createEngine(), RW = re.world, RIN = re._internal;
+    RW.wanted = 3; RW.player.inCar = true; RW.roadblockCd = 0;
+    var car0 = RW.police.length, cop0 = RW.peds.filter(function (q) { return q.cop; }).length;
+    assert.ok(RIN.spawnRoadblock() === true, 'roadblock spawns at 3★ in a car');
+    assert.ok(RW.police.length - car0 === 2, 'roadblock adds 2 cruisers');
+    assert.ok(RW.peds.filter(function (q) { return q.cop; }).length - cop0 >= 2, 'roadblock adds manning officers');
+    assert.ok(RW.roadblockCd > 0, 'roadblock goes on cooldown (no spam)');
+    var bx = RW.police[RW.police.length - 1].x;
+    assert.ok(isFinite(bx), 'roadblock cruiser has a finite position');
+    // can't roadblock again until cooldown elapses
+    assert.ok(RIN.spawnRoadblock() === false, 'roadblock respects its cooldown');
   })();
 
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
@@ -814,6 +852,8 @@ function run() {
     if (car.npc) { car.npc.inCar = false; car.npc = null; }
     car.x = 500; car.z = 500; car.yaw = 0; car.vx = 0; car.vz = 0; car.speed = 0; car.steer = 0; car.onFire = false; car.exploded = false;
     car.driver = 'player'; DW.playerCar = car; DW.player.inCar = true; DW.player.car = car;
+    // park every OTHER car far away so a roaming AI car can't rear-end the accelerating test car
+    for (i = 0; i < DW.cars.length; i++) { var oc = DW.cars[i]; if (oc !== car) { oc.x = 30 + (i % 12) * 6; oc.z = 30; oc.vx = 0; oc.vz = 0; oc.speed = 0; oc.driver = null; if (oc.npc) oc.npc.inCar = true; } }
     for (i = 0; i < 130; i++) de.step(STEP, { forward: true }); // build speed in a straight line
     assert.ok(car.speed > 20, 'car reaches speed before the drift (got ' + car.speed.toFixed(1) + ')');
     var slid = false, maxLat = 0;
