@@ -191,6 +191,7 @@
       interior: null,           // when inside a shop: { type, name, baseX, baseZ } — sim pauses, room renders
       stores: [],               // robbable convenience stores (repeatable earners)
       ownedCarTier: 0,          // index into CAR_TIERS for the player's respawn car
+      carMods: { engine: 1, top: 1, grip: 1, turn: 1, paint: null }, // persistent vehicle customization
       ownedProps: [],           // indices of bought apartments (safehouses + passive income)
       incomeAccrued: 0,         // passive income drip, paid out on a cadence
       goals: [], netWorth: 0,
@@ -387,11 +388,13 @@
     var SHOP_RADIUS = 5.5;
     // Personal-vehicle tiers. Tier 0 EXACTLY matches the module car constants so
     // traffic/police (which use makeCar defaults) are unchanged byte-for-byte.
+    // grip/turn are HANDLING multipliers (×CAR_GRIP / ×CAR_TURN): pricier cars don't just go
+    // faster, they corner tighter and stay planted — the beater is deliberately sloppy.
     var CAR_TIERS = [
-      { name: 'Beater',   price: 0,     engine: CAR_ENGINE, top: CAR_TOP, color: 0x9aa0a8 },
-      { name: 'Sedan',    price: 1500,  engine: 46,         top: 58,      color: 0x2d6cb0 },
-      { name: 'Sports',   price: 6000,  engine: 60,         top: 74,      color: 0xc0392b },
-      { name: 'Supercar', price: 20000, engine: 78,         top: 92,      color: 0xf1c40f }
+      { name: 'Beater',   price: 0,     engine: CAR_ENGINE, top: CAR_TOP, color: 0x9aa0a8, grip: 0.90, turn: 0.92 },
+      { name: 'Sedan',    price: 1500,  engine: 46,         top: 58,      color: 0x2d6cb0, grip: 1.00, turn: 1.00 },
+      { name: 'Sports',   price: 6000,  engine: 60,         top: 74,      color: 0xc0392b, grip: 1.12, turn: 1.15 },
+      { name: 'Supercar', price: 20000, engine: 78,         top: 92,      color: 0xf1c40f, grip: 1.22, turn: 1.26 }
     ];
     // Apartments: fixed safehouses. Owning one drips income + lets you "lie low".
     // Income tuned (measured) so passive < active play: all 3 ≈ $1.4k/min vs courier
@@ -431,7 +434,10 @@
         { label: 'Sedan', price: 1500, apply: function () { grantCar(1); } },
         { label: 'Sports Car', price: 6000, apply: function () { grantCar(2); } },
         { label: 'Supercar', price: 20000, apply: function () { grantCar(3); } },
-        { label: 'Repair / Respray', price: 150, apply: function () { if (W.playerCar) { W.playerCar.hp = 120; W.playerCar.color = choice(CAR_COLORS); if (W.wanted > 0 && !W.seen) { W.wanted--; W.lkpValid = false; } } } }
+        { label: 'Repair / Respray', price: 150, apply: function () { if (W.playerCar) { W.playerCar.hp = 120; W.playerCar.color = choice(CAR_COLORS); if (W.wanted > 0 && !W.seen) { W.wanted--; W.lkpValid = false; } } } },
+        { label: 'Sport Tires (grip + handling)', price: 3000, apply: function () { W.carMods.grip = Math.min(1.4, (W.carMods.grip || 1) + 0.12); W.carMods.turn = Math.min(1.4, (W.carMods.turn || 1) + 0.10); if (W.playerCar) applyCarTier(W.playerCar, W.playerCar.tier || W.ownedCarTier); } },
+        { label: 'Performance Tune (speed + accel)', price: 5000, apply: function () { W.carMods.engine = Math.min(1.5, (W.carMods.engine || 1) + 0.15); W.carMods.top = Math.min(1.4, (W.carMods.top || 1) + 0.12); if (W.playerCar) applyCarTier(W.playerCar, W.playerCar.tier || W.ownedCarTier); } },
+        { label: 'Custom Paint Job', price: 800, apply: function () { var col = choice(CAR_COLORS); W.carMods.paint = col; if (W.playerCar) W.playerCar.color = col; } }
       ]},
       realty: { name: 'Dynasty 8 Real Estate', items: [] }, // filled from PROPERTY_DEFS at reset
       biz: { name: 'Maze Bank Foreclosures', items: [] },   // filled from BUSINESS_DEFS at reset
@@ -532,7 +538,15 @@
       applyCarTier(c, tier);
       post('@you', 'Picked up a ' + t.name + '. 🚗');
     }
-    function applyCarTier(c, tier) { var t = CAR_TIERS[tier]; c.engine = t.engine; c.top = t.top; c.color = t.color; c.tier = tier; }
+    // Applies a tier's stats to a player-owned car, layered with persistent customization (W.carMods:
+    // perf tune + sport tires + a custom paint). Traffic/police cars never go through here, so their
+    // gripMul/turnMul stay undefined and driveCar falls back to the stock 1.0 handling.
+    function applyCarTier(c, tier) {
+      var t = CAR_TIERS[tier], m = W.carMods || {};
+      c.engine = t.engine * (m.engine || 1); c.top = t.top * (m.top || 1);
+      c.color = (m.paint != null) ? m.paint : t.color; c.tier = tier;
+      c.gripMul = t.grip * (m.grip || 1); c.turnMul = t.turn * (m.turn || 1);
+    }
 
     function nearestShop(maxD) { var best = null, bd = maxD * maxD; for (var i = 0; i < W.shops.length; i++) { var s = W.shops[i]; var d = d2(s.x, s.z, W.player.x, W.player.z); if (d < bd) { bd = d; best = s; } } return best; }
     function nearestProperty(maxD) { // returns index of an OWNED apartment within range, or -1
@@ -555,7 +569,7 @@
     // safehouse: walk into an owned apartment to instantly clear heat + heal, free.
     function enterSafehouse() {
       var i = nearestProperty(6); if (i < 0) return false;
-      W.wanted = 0; W.lkpValid = false; W.seen = false; W.searchTimer = 0; clearFootCops(true); W.police.length = 0;
+      W.wanted = 0; W.lkpValid = false; W.seen = false; W.searchTimer = 0; W.roadblockCd = 0; clearFootCops(true); W.police.length = 0;
       W.player.hp = W.player.maxHp; W.player.armor = Math.max(W.player.armor, 50);
       post('@you', 'Laid low at ' + PROPERTY_DEFS[i].name + '. Heat cleared. 🏠');
       return true;
@@ -709,7 +723,8 @@
       var wp = {}; for (k in p.weapons) if (p.weapons.hasOwnProperty(k)) wp[k] = p.weapons[k];
       return {
         v: 1, money: W.money, kills: W.kills, jobsDone: W.jobsDone, rampagesDone: W.rampagesDone, heistsDone: W.heistsDone,
-        ownedCarTier: W.ownedCarTier, ownedProps: W.ownedProps.slice(), homePropIndex: W.homePropIndex,
+        ownedCarTier: W.ownedCarTier, carMods: { engine: W.carMods.engine, top: W.carMods.top, grip: W.carMods.grip, turn: W.carMods.turn, paint: W.carMods.paint },
+        ownedProps: W.ownedProps.slice(), homePropIndex: W.homePropIndex,
         ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
         zonesOwned: W.zones.map(function (z) { return !!z.owned; }),
         milestones: m, goalsDone: W.goals.map(function (g) { return !!g.done; }),
@@ -721,6 +736,7 @@
       W.money = s.money | 0; W.kills = s.kills | 0; W.jobsDone = s.jobsDone | 0; W.rampagesDone = s.rampagesDone | 0; W.heistsDone = s.heistsDone | 0;
       W.ownedCarTier = s.ownedCarTier | 0; W.ownedProps = (s.ownedProps || []).slice(); W.homePropIndex = (s.homePropIndex == null ? null : (s.homePropIndex | 0));
       W.ownedBiz = (s.ownedBiz || []).slice(); W.bizVault = (s.bizVault || []).slice();
+      if (s.carMods) { W.carMods.engine = s.carMods.engine || 1; W.carMods.top = s.carMods.top || 1; W.carMods.grip = s.carMods.grip || 1; W.carMods.turn = s.carMods.turn || 1; W.carMods.paint = (s.carMods.paint == null ? null : s.carMods.paint); }
       if (s.zonesOwned) for (var zi = 0; zi < W.zones.length; zi++) { if (s.zonesOwned[zi]) { W.zones[zi].owned = true; } }
       W.ownedZones = W.zones.filter(function (z) { return z.owned; }).length;
       if (s.milestones) { W.milestones = {}; for (var mk in s.milestones) if (s.milestones.hasOwnProperty(mk)) W.milestones[mk] = s.milestones[mk]; }
@@ -738,7 +754,9 @@
       // bring the courtesy car to the player and re-tier it to the restored tier (spawnPlayer made a
       // tier-0 beater because ownedCarTier was 0 at world creation — fix it up to what was saved).
       var court = null; for (var ci = 0; ci < W.cars.length; ci++) { var cc = W.cars[ci]; if (cc.driver == null && !cc.wasPolice && !cc.npc && !cc.exploded) { court = cc; break; } }
-      if (court) { applyCarTier(court, W.ownedCarTier); var cp = roadNear(W.player.x, W.player.z, 4, 12); if (cp) { court.x = cp.x; court.z = cp.z; } }
+      // (the [4,12] annulus can be empty — adjacent road tiles are ~14u away — so widen, then fall
+      // back to right beside the player so a loaded car is never stranded across the map.)
+      if (court) { applyCarTier(court, W.ownedCarTier); var cp = roadNear(W.player.x, W.player.z, 4, 18) || roadNear(W.player.x, W.player.z, 0, 30) || { x: W.player.x + 4, z: W.player.z }; court.x = cp.x; court.z = cp.z; }
       recomputeNetWorth();
       post('@you', 'Save loaded — welcome back. Net worth $' + W.netWorth.toLocaleString('en-US'));
       return true;
@@ -995,7 +1013,7 @@
       W.wanted = 0; W.lkpValid = false; W.seen = false; W.searchTimer = 0; W.disguiseCd = 0;
       W.money = 0; W.kills = 0; W.fireCd = 0; W.feed = [];
       // economy reset
-      W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.ownedProps = []; W.homePropIndex = null; W.incomeAccrued = 0; W.netWorth = 0;
+      W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.carMods = { engine: 1, top: 1, grip: 1, turn: 1, paint: null }; W.ownedProps = []; W.homePropIndex = null; W.incomeAccrued = 0; W.netWorth = 0;
       W.helis = []; W.heliCd = 0; W.roadblockCd = 0;
       // gameplay-loop reset
       W.popups = [];
@@ -1101,15 +1119,19 @@
       // STEER FIRST. The car heading rotates, but the world velocity vector does NOT
       // instantly follow — that mismatch (re-measured below) is what produces a slide.
       // Authority scales with actual speed: can't pivot from a stop, less twitchy at pace.
+      // Per-car stats (set by applyCarTier / applyPoliceTier) override the stock globals so a
+      // pricier ride is genuinely faster + grippier; stock traffic/jacked cars fall back to base.
+      var topSpd = car.top || CAR_TOP, accel = car.engine || CAR_ENGINE;
+      var gripMul = car.gripMul || 1, turnMul = car.turnMul || 1;
       var v = Math.hypot(car.vx, car.vz);
       var heading = car.vx * Math.sin(car.yaw) + car.vz * Math.cos(car.yaw); // signed: fwd vs reverse
       // Steering authority: a floor so you can turn the moment you start rolling
       // (no dead zone off the line), full authority by ~v=4, and only a gentle
       // taper at top speed so it stays responsive instead of understeery.
       var lowEnd = clamp(0.4 + v / 4, 0, 1);
-      var highDamp = 1 - clamp((v - 18) / (CAR_TOP - 18), 0, 1) * 0.4;   // up to -40% at top speed
+      var highDamp = 1 - clamp((v - 18) / (Math.max(20, topSpd) - 18), 0, 1) * 0.4;   // up to -40% at top speed
       var steerAuthority = lowEnd * highDamp * (handbrake ? 1.7 : 1);    // sharper while sliding
-      car.yaw += steerInput * CAR_TURN * dt * steerAuthority * (heading >= -0.5 ? 1 : -1);
+      car.yaw += steerInput * CAR_TURN * turnMul * dt * steerAuthority * (heading >= -0.5 ? 1 : -1);
 
       // Decompose the (unchanged) world velocity against the NEW heading: any forward
       // momentum that no longer aligns with the nose becomes lateral velocity.
@@ -1121,7 +1143,7 @@
       // engine / brake / reverse on the forward component
       // throttle still bites during a handbrake drift (at reduced power) so you can keep the
       // slide going with the gas instead of just bleeding speed.
-      if (throttle > 0) forwardSpeed += CAR_ENGINE * throttle * (handbrake ? 0.6 : 1) * dt;
+      if (throttle > 0) forwardSpeed += accel * throttle * (handbrake ? 0.6 : 1) * dt;
       if (handbrake) {
         // light scrub only — keep momentum so the slide carries through the corner
         forwardSpeed -= Math.sign(forwardSpeed) * Math.min(Math.abs(forwardSpeed), CAR_BRAKE * 0.22 * dt);
@@ -1132,14 +1154,14 @@
         forwardSpeed -= Math.sign(forwardSpeed) * Math.min(Math.abs(forwardSpeed), CAR_ROLL * dt); // engine braking
       }
       forwardSpeed -= forwardSpeed * CAR_DRAG * dt;
-      forwardSpeed = clamp(forwardSpeed, -CAR_TOP_REV, CAR_TOP);
+      forwardSpeed = clamp(forwardSpeed, -CAR_TOP_REV, topSpd);
 
       // lateral grip: planted at low speed, but it LOOSENS when you throw the car hard into a
       // fast corner (a power-slide) and drops to almost nothing on the handbrake — so drifts
       // both initiate and hold, then the grip returns and the slide recovers when you settle.
       var corner = clamp((v - 12) / 34, 0, 1) * Math.abs(steerInput);  // 0..1: speed × steer lock
-      var grip = CAR_GRIP * (1 - corner * 0.55);
-      if (handbrake) grip = CAR_GRIP * 0.08;
+      var grip = CAR_GRIP * gripMul * (1 - corner * 0.55);
+      if (handbrake) grip = CAR_GRIP * gripMul * 0.08;
       latSpeed -= latSpeed * Math.min(1, grip * dt);
 
       // recompose world velocity
@@ -1785,7 +1807,7 @@
 
       if (W.state === 'wasted') {
         W.respawnTimer -= dt; ageFeed(dt);
-        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
+        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.roadblockCd = 0; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
         return;
       }
       if (W.player.hp <= 0) { wasted(); return; }

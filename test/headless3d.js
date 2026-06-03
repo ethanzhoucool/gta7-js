@@ -840,6 +840,40 @@ function run() {
     assert.ok(isFinite(bx), 'roadblock cruiser has a finite position');
     // can't roadblock again until cooldown elapses
     assert.ok(RIN.spawnRoadblock() === false, 'roadblock respects its cooldown');
+    // safehouse clears the roadblock cooldown so the next chase isn't suppressed
+    RW.money = 99999; RW.player.inCar = false; RIN.buyItem('realty', 0);
+    var spp = RW.propPos[0]; RW.player.x = spp.x; RW.player.z = spp.z; RW.wanted = 3; RW.roadblockCd = 20;
+    RIN.enterSafehouse();
+    assert.ok(RW.roadblockCd === 0, 'safehouse clears the roadblock cooldown');
+  })();
+
+  // 9p7v) VEHICLES — pricier tiers are genuinely faster AND corner better (per-car engine/top/grip
+  //       now drive the physics), and customization (sport tires) persists across save/load.
+  (function vehicleChecks() {
+    function topRun(tier) {
+      var ee = GTA3D.createEngine(), WW = ee.world, EIN = ee._internal, i;
+      for (var z = 0; z < ee.constants.MAP; z++) for (var x = 0; x < ee.constants.MAP; x++) WW.grid[z][x] = ee.constants.T_ROAD;
+      for (i = 0; i < WW.peds.length; i++) WW.peds[i].alive = false;
+      var car = null; for (i = 0; i < WW.cars.length; i++) if (WW.cars[i].driver === 'ai') { car = WW.cars[i]; break; }
+      if (car.npc) { car.npc.inCar = false; car.npc = null; }
+      car.x = 500; car.z = 500; car.yaw = 0; car.vx = 0; car.vz = 0; car.speed = 0;
+      EIN.applyCarTier(car, tier);
+      car.driver = 'player'; WW.playerCar = car; WW.player.inCar = true; WW.player.car = car;
+      for (i = 0; i < WW.cars.length; i++) { var oc = WW.cars[i]; if (oc !== car) { oc.x = 30 + (i % 12) * 6; oc.z = 30; oc.vx = 0; oc.vz = 0; oc.speed = 0; oc.driver = null; if (oc.npc) oc.npc.inCar = true; } }
+      for (i = 0; i < 400; i++) ee.step(STEP, { forward: true });
+      return { speed: car.speed, grip: car.gripMul, turn: car.turnMul };
+    }
+    var beater = topRun(0), sports = topRun(2), sc = topRun(3);
+    assert.ok(sports.speed > beater.speed + 8 && sc.speed > sports.speed + 5,
+      'pricier cars are genuinely faster (' + beater.speed.toFixed(0) + ' < ' + sports.speed.toFixed(0) + ' < ' + sc.speed.toFixed(0) + ')');
+    assert.ok(sc.grip > beater.grip && sc.turn > beater.turn, 'pricier cars corner grippier + sharper');
+    // customization: Sport Tires (car catalog idx 4) raises the grip carMod, persisting via save/load
+    var ce = GTA3D.createEngine(), CW = ce.world, CIN = ce._internal;
+    CW.player.inCar = false; CW.money = 99999; var g0 = CW.carMods.grip;
+    assert.ok(CIN.buyItem('car', 4) === true && CW.carMods.grip > g0, 'sport tires raise the grip carMod');
+    var snap = JSON.parse(JSON.stringify(CIN.serializeSave()));
+    var le = GTA3D.createEngine(), LW = le.world, LIN = le._internal; LIN.applySave(snap);
+    assert.ok(Math.abs(LW.carMods.grip - CW.carMods.grip) < 1e-6, 'carMods persist across save/load');
   })();
 
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
