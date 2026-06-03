@@ -876,6 +876,21 @@ function run() {
     assert.ok(Math.abs(LW.carMods.grip - CW.carMods.grip) < 1e-6, 'carMods persist across save/load');
   })();
 
+  // 9p7g) GYM — training permanently raises stats: STR buys max HP, STA buys run speed; both persist.
+  (function gymChecks() {
+    var ge = GTA3D.createEngine(), GW = ge.world, GIN = ge._internal;
+    GW.player.inCar = false; GW.money = 99999;
+    var hp0 = GW.player.maxHp, str0 = GW.player.strength, run0 = GW.player.runMul, sta0 = GW.player.stamina;
+    assert.ok(GIN.shopCatalog('gym') && GIN.shopCatalog('gym').items.length >= 2, 'gym catalog present');
+    assert.ok(GIN.buyItem('gym', 0) === true, 'buy a strength session');
+    assert.ok(GW.player.maxHp > hp0 && GW.player.strength > str0 && GW.player.hp === GW.player.maxHp, 'pumping iron raises max HP + STR + heals');
+    assert.ok(GIN.buyItem('gym', 1) === true && GW.player.runMul > run0 && GW.player.stamina > sta0, 'cardio raises run speed + STA');
+    // stats persist across save/load
+    var snap = JSON.parse(JSON.stringify(GIN.serializeSave()));
+    var le = GTA3D.createEngine(), LW = le.world, LIN = le._internal; LIN.applySave(snap);
+    assert.ok(LW.player.maxHp === GW.player.maxHp && Math.abs(LW.player.runMul - GW.player.runMul) < 1e-6 && LW.player.strength === GW.player.strength, 'gym gains persist across save/load');
+  })();
+
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
   //     car recovers afterwards (doesn't spin out forever or go non-finite).
   (function driftCheck() {

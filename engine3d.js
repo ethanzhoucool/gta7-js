@@ -324,6 +324,7 @@
       return { x: x, y: 0, z: z, vx: 0, vz: 0, vy: 0, yaw: 0, aimYaw: 0, onGround: true,
         coyote: 0, jumpBuffer: 0, hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, inCar: false, aiming: false, moving: false, name: 'Jay',
         armor: 0, ammo: 999999, gunDmgMul: 1, fireRateMul: 1,         // economy upgrades
+        strength: 0, stamina: 0, runMul: 1,                           // gym stats: STR→max HP, STA→run speed
         barBuff: 0,                                                    // temp bar-drink dmg buff (0–3, decays); separate from gunDmgMul
         weapons: { pistol: true }, weapon: 'pistol' };                 // owned guns + current
     }
@@ -459,6 +460,11 @@
         // a drink stacks a TEMPORARY damage buff (separate from the permanent gun upgrade) that decays
         { label: 'Cold Beer (liquid courage)', price: 40, apply: function () { W.player.barBuff = Math.min(3, (W.player.barBuff || 0) + 1.0); } },
         { label: 'Top-Shelf Whiskey', price: 95, apply: function () { W.player.barBuff = Math.min(3, (W.player.barBuff || 0) + 2.0); } }
+      ]},
+      gym: { name: 'Muscle Beach Gym', items: [
+        // train to permanently raise stats: strength buys max HP, stamina buys run speed.
+        { label: 'Pump Iron (+ STR, +15 max HP)', price: 350, apply: function () { var p = W.player; p.strength = Math.min(100, (p.strength || 0) + 10); p.maxHp = Math.min(300, p.maxHp + 15); p.hp = p.maxHp; } },
+        { label: 'Treadmill (+ STA, + run speed)', price: 350, apply: function () { var p = W.player; p.stamina = Math.min(100, (p.stamina || 0) + 10); p.runMul = Math.min(1.4, (p.runMul || 1) + 0.05); } }
       ]}
     };
     var SHOP_DEFS = [ // tx,tz near road lanes; spread across SF (z>=28) and Marin (z<20)
@@ -472,7 +478,8 @@
       { type: 'diner',  tx: 58, tz: 50 },  // SF mid
       { type: 'bar',    tx: 38, tz: 62 },  // SF Mission
       { type: 'bar',    tx: 46, tz: 14 },  // Marin
-      { type: 'biz',    tx: 64, tz: 44 }   // business broker, downtown
+      { type: 'biz',    tx: 64, tz: 44 },  // business broker, downtown
+      { type: 'gym',    tx: 28, tz: 40 }   // Muscle Beach Gym, SF west-central
     ];
 
     function snapToRoad(tx, tz) {
@@ -728,7 +735,7 @@
         ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
         zonesOwned: W.zones.map(function (z) { return !!z.owned; }),
         milestones: m, goalsDone: W.goals.map(function (g) { return !!g.done; }),
-        player: { maxHp: p.maxHp, armor: p.armor, gunDmgMul: p.gunDmgMul, fireRateMul: p.fireRateMul, weapon: p.weapon, weapons: wp }
+        player: { maxHp: p.maxHp, armor: p.armor, gunDmgMul: p.gunDmgMul, fireRateMul: p.fireRateMul, strength: p.strength, stamina: p.stamina, runMul: p.runMul, weapon: p.weapon, weapons: wp }
       };
     }
     function applySave(s) {
@@ -744,6 +751,7 @@
       if (s.player) { var p = W.player, sp = s.player;
         if (sp.maxHp) { p.maxHp = sp.maxHp; p.hp = sp.maxHp; }
         p.armor = sp.armor || 0; p.gunDmgMul = sp.gunDmgMul || 1; p.fireRateMul = sp.fireRateMul || 1;
+        p.strength = sp.strength || 0; p.stamina = sp.stamina || 0; p.runMul = sp.runMul || 1;
         if (sp.weapons) for (var wk in sp.weapons) if (sp.weapons.hasOwnProperty(wk)) p.weapons[wk] = sp.weapons[wk];
         if (sp.weapon && p.weapons[sp.weapon]) p.weapon = sp.weapon;
       }
@@ -1086,7 +1094,7 @@
       if (input.right) { fx2 += Math.sin(input.camYaw - Math.PI / 2); fz2 += Math.cos(input.camYaw - Math.PI / 2); }
       var len = Math.hypot(fx2, fz2);
       // aiming or shooting slows you to a controllable strafe; running speeds you up
-      var maxSpeed = input.run ? PLAYER_RUN : PLAYER_WALK;
+      var maxSpeed = (input.run ? PLAYER_RUN : PLAYER_WALK) * (p.runMul || 1); // gym stamina raises run speed
       if (input.aim || input.shoot) maxSpeed *= 0.55;
       var desVx = 0, desVz = 0;
       if (len > 0.001) { fx2 /= len; fz2 /= len; desVx = fx2 * maxSpeed; desVz = fz2 * maxSpeed; p.moving = true; }
