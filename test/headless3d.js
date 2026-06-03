@@ -655,6 +655,58 @@ function run() {
     assert.ok(Math.abs(IW.player.z - (gun.z + 1.5)) < 0.6, 'player exits onto the street at the door');
   })();
 
+  // 9p4) PHASE 4 — enterable owned homes + respawn-at-home. Buying an apartment sets it as your
+  //      home; F at the door walks you inside a furnished 'apartment' interior; dying respawns you
+  //      at your home door (with a randomRoad fallback when you own nothing).
+  (function homeChecks() {
+    var he = GTA3D.createEngine(), HW = he.world, IN = he._internal;
+    // buying an apartment auto-assigns it as home (respawn point)
+    assert.ok(HW.homePropIndex == null, 'no home before buying any apartment');
+    HW.money = 50000; HW.player.inCar = false;
+    assert.ok(IN.buyItem('realty', 0) === true && HW.ownedProps.indexOf(0) >= 0, 'apartment 0 bought');
+    assert.strictEqual(HW.homePropIndex, 0, 'first apartment bought becomes home');
+    // buying a SECOND apartment does NOT steal the home assignment
+    HW.money = 50000; IN.buyItem('realty', 1);
+    assert.strictEqual(HW.homePropIndex, 0, 'home stays the first apartment after a second purchase');
+    // enterHome rejects a property you do NOT own
+    var unowned = -1; for (var pi = 0; pi < HW.propPos.length; pi++) if (HW.ownedProps.indexOf(pi) < 0) { unowned = pi; break; }
+    if (unowned >= 0) assert.ok(IN.enterHome(unowned) === false && !HW.interior, 'cannot enter an apartment you do not own');
+    // F at the door of an owned apartment steps inside a furnished apartment interior.
+    // Move all vehicles away so tryEnterExit routes to the home (not a stray car) deterministically.
+    for (var ci = 0; ci < HW.cars.length; ci++) { HW.cars[ci].x = 9000; HW.cars[ci].z = 9000; if (HW.cars[ci].npc) HW.cars[ci].npc.inCar = true; }
+    var hp = HW.propPos[0]; HW.player.x = hp.x; HW.player.z = hp.z; HW.player.inCar = false;
+    IN.tryEnterExit();
+    assert.ok(HW.interior && HW.interior.type === 'apartment' && HW.interior.propIndex === 0, 'F at the owned apartment enters home');
+    assert.ok(!HW.currentShop, 'no buy menu inside a home');
+    // confined to the room, then F leaves back onto the street
+    for (var k = 0; k < 80; k++) he.step(STEP, { forward: true, camYaw: Math.PI });
+    assert.ok(HW.interior && Math.abs(HW.player.x - HW.interior.baseX) <= 8 && HW.player.z >= HW.interior.baseZ - 12.5, 'player confined to the home room');
+    he.step(STEP, { enterPressed: true });
+    assert.ok(!HW.interior, 'F leaves the home');
+
+    // respawn-at-home: own a home, die, and respawn at the home door (not a random road)
+    var re = GTA3D.createEngine(), RW = re.world, RIN = re._internal;
+    RW.money = 50000; RW.player.inCar = false; RIN.buyItem('realty', 0);
+    var home = RW.propPos[RW.homePropIndex];
+    RW.player.x = 700; RW.player.z = 700;            // die far from home
+    RW.player.hp = 0;
+    var sawWasted = false;
+    for (var s = 0; s < 240; s++) { re.step(STEP, {}); if (RW.state === 'wasted') sawWasted = true; if (RW.state === 'play' && sawWasted) break; }
+    assert.ok(sawWasted && RW.state === 'play', 'death -> wasted -> respawn cycle completes');
+    var dHome = Math.hypot(RW.player.x - home.x, RW.player.z - home.z);
+    assert.ok(dHome < 2.0, 'respawned at the home door (dist ' + dHome.toFixed(1) + ')');
+    assert.ok(RW.player.hp > 0 && isFinite(RW.player.x) && isFinite(RW.player.z), 'respawn restores hp at a finite spot');
+
+    // fallback: own NOTHING -> respawn still works on a road (homePropIndex stays null, no crash)
+    var fe = GTA3D.createEngine(), FW = fe.world;
+    assert.ok(FW.homePropIndex == null, 'no home owned');
+    FW.player.x = 700; FW.player.z = 700; FW.player.inCar = false; FW.player.hp = 0;
+    var sawW2 = false;
+    for (var s2 = 0; s2 < 240; s2++) { fe.step(STEP, {}); if (FW.state === 'wasted') sawW2 = true; if (FW.state === 'play' && sawW2) break; }
+    assert.ok(sawW2 && FW.state === 'play' && FW.player.hp > 0 && isFinite(FW.player.x), 'homeless respawn falls back to a road, no crash');
+    assert.ok(FW.homePropIndex == null, 'homeless respawn leaves homePropIndex null (never invents a home)');
+  })();
+
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
   //     car recovers afterwards (doesn't spin out forever or go non-finite).
   (function driftCheck() {

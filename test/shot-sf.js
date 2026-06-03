@@ -96,7 +96,20 @@ var DIR = path.resolve(__dirname, '..');
     if (window.__setCam) window.__setCam(Math.PI, 0.12); // face the back counter + gun racks
   });
 
-  console.log('SF_SHOTS ' + JSON.stringify({ a: a, b: b, c: c }) + ' errs=' + errs.length);
+  await page.evaluate(function () { var IN = window.__ENG._internal; if (window.__ENG.world.interior) IN.exitShop(); });
+  // 9) INSIDE an owned apartment — should read as a furnished home (bed, sofa, TV, lamp), not a shop.
+  // Clear any accumulated heat (this is the last shot; the live loop has run a while) and own the
+  // apartment directly so the capture is deterministic.
+  var apt = await shot('shot-sf-apartment.png', function (W, K, TILE) {
+    var IN = window.__ENG._internal;
+    W.money = 99999; W.player.inCar = false; W.wanted = 0; W.police = []; W.helis = [];
+    if (W.ownedProps.indexOf(0) < 0) W.ownedProps.push(0); W.homePropIndex = 0;
+    var pp = W.propPos[0]; W.player.x = pp.x; W.player.z = pp.z; W.player.y = 0;
+    IN.enterHome(0);
+    if (window.__setCam) window.__setCam(Math.PI, 0.02); // face the living space toward the back wall
+  });
+
+  console.log('SF_SHOTS ' + JSON.stringify({ a: a, b: b, c: c, apt: apt }) + ' errs=' + errs.length);
   if (errs.length) console.log('ERRS ' + JSON.stringify(errs.slice(0, 5)));
   await browser.close();
   process.exit(errs.length ? 1 : 0);

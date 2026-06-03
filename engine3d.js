@@ -459,7 +459,7 @@
     }
     function buildRealtyCatalog() {
       SHOP_CATALOG.realty.items = PROPERTY_DEFS.map(function (d, i) {
-        return { label: d.name, price: d.price, apply: function () { if (W.ownedProps.indexOf(i) < 0) W.ownedProps.push(i); } };
+        return { label: d.name, price: d.price, apply: function () { if (W.ownedProps.indexOf(i) < 0) W.ownedProps.push(i); if (W.homePropIndex == null) W.homePropIndex = i; } };
       });
     }
     function placeShops() {
@@ -595,8 +595,24 @@
       if (!W.interior) return;
       W.player.x = W.interior.baseX; W.player.z = W.interior.baseZ + 1.5; // back out onto the street
       W.player.y = 0; W.player.vy = 0;
+      var wasHome = W.interior.type === 'apartment';
       W.interior = null; W.currentShop = null;
-      post('@you', 'Back on the street.');
+      post('@you', wasHome ? 'Left your apartment.' : 'Back on the street.');
+    }
+    // Walk into an OWNED apartment to go inside your home. Reuses the interior state machine
+    // (exitShop/interiorStep are type-agnostic). The renderer draws an 'apartment' room. Entering
+    // a home also makes it your respawn point (W.homePropIndex) if none is set yet.
+    function enterHome(idx) {
+      if (W.player.inCar) return false;
+      if (idx == null || idx < 0 || W.ownedProps.indexOf(idx) < 0) return false;
+      var d = PROPERTY_DEFS[idx]; if (!d) return false;
+      W.interior = { type: 'apartment', name: d.name, baseX: W.player.x, baseZ: W.player.z, propIndex: idx };
+      W.currentShop = null; W.shopIndex = 0;
+      W.player.z -= 3;            // step inside, facing the living space
+      W.player.inCar = false; W.player.y = 0; W.player.vy = 0;
+      if (W.homePropIndex == null) W.homePropIndex = idx;   // first home entered becomes your spawn
+      post('@you', '🏠 Home — ' + d.name + '. [F] leave · [H] lie low');
+      return true;
     }
     function interiorStep(dt, input) {
       var p = W.player, it = W.interior, cy = input.camYaw || 0, fx2 = 0, fz2 = 0;
@@ -798,7 +814,7 @@
       W.wanted = 0; W.lkpValid = false; W.seen = false; W.searchTimer = 0; W.disguiseCd = 0;
       W.money = 0; W.kills = 0; W.fireCd = 0; W.feed = [];
       // economy reset
-      W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.ownedProps = []; W.incomeAccrued = 0; W.netWorth = 0;
+      W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.ownedProps = []; W.homePropIndex = null; W.incomeAccrued = 0; W.netWorth = 0;
       W.helis = []; W.heliCd = 0;
       // gameplay-loop reset
       W.popups = [];
@@ -1253,10 +1269,13 @@
       var c = nearestCar(4.5);
       var pc = nearestPoliceCar(4.5);
       var shop = nearestShop(3.6);
-      // pick the closest interactable: walk into a shop, steal a cruiser, or grab a car
+      var homeI = nearestProperty(4.0);  // index of an OWNED apartment at the door, or -1
+      // pick the closest interactable: enter home, walk into a shop, steal a cruiser, or grab a car
       var carD = c ? d2(c.x, c.z, p.x, p.z) : 1e9;
       var pcD = pc ? d2(pc.x, pc.z, p.x, p.z) : 1e9;
       var shopD = shop ? d2(shop.x, shop.z, p.x, p.z) : 1e9;
+      var homeD = (homeI >= 0 && W.propPos && W.propPos[homeI]) ? d2(W.propPos[homeI].x, W.propPos[homeI].z, p.x, p.z) : 1e9;
+      if (homeI >= 0 && homeD <= shopD && homeD <= carD && homeD <= pcD) { enterHome(homeI); return; }
       if (shop && shopD <= carD && shopD <= pcD) { enterShop(shop); return; }
       // steal the cruiser if it's the closest stealable vehicle
       if (pc && pcD < carD) { stealPoliceCar(pc); return; }
@@ -1393,6 +1412,7 @@
     function wasted() {
       if (W.state !== 'play') return;
       W.state = 'wasted'; W.respawnTimer = 2.6; W.message = 'WASTED';
+      W.interior = null; W.currentShop = null;   // dying inside (via API) must not deadlock the respawn behind the interior guard
       fx('blood', W.player.x, 1, W.player.z);
       if (W.player.inCar && W.playerCar) { W.playerCar.driver = null; W.player.inCar = false; W.playerCar = null; }
     }
@@ -1548,7 +1568,7 @@
 
       if (W.state === 'wasted') {
         W.respawnTimer -= dt; ageFeed(dt);
-        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } var pr = randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', 'Out of the hospital, $100 lighter.'); }
+        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
         return;
       }
       if (W.player.hp <= 0) { wasted(); return; }
@@ -1623,7 +1643,7 @@
       _internal: { tryEnterExit: tryEnterExit, robNearest: robNearest, fireWeapon: fireWeapon, commitCrime: commitCrime,
         lineOfSight: lineOfSight, circleHitsSolid: circleHitsSolid, nearestCar: nearestCar, reset: reset, alertPolice: alertPolice,
         hurtPlayer: hurtPlayer, buyItem: buyItem, shopCatalog: shopCatalog, nearestShop: nearestShop, nearestProperty: nearestProperty,
-        robStore: robStore, enterSafehouse: enterSafehouse, enterShop: enterShop, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
+        robStore: robStore, enterSafehouse: enterSafehouse, enterShop: enterShop, enterHome: enterHome, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
         killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot, makeCopFoot: makeCopFoot,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,

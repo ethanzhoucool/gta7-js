@@ -437,7 +437,7 @@
     /* ----------------------- Storefronts + shop interiors ----------------- */
     // Each shop gets an awning + lit sign + doorway so it reads as a real store, mounted on
     // the building beside its door. Walk up and press F to step inside (see below).
-    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9, convenience: 0x6bf08a, diner: 0xffd23f, bar: 0xff6b9d };
+    var SHOP_ACCENT = { gun: 0xff8c3a, car: 0x5ad1ff, realty: 0xb59cff, style: 0xff7ad9, convenience: 0x6bf08a, diner: 0xffd23f, bar: 0xff6b9d, apartment: 0xffcf8a };
     var storefrontGroup = new THREE.Group(); scene.add(storefrontGroup);
     (function buildStorefronts() {
       for (var s = 0; s < W.shops.length; s++) {
@@ -784,7 +784,7 @@
       finalizeIM(imPlinth, iPlinth);
     }
     buildBuildingDetails();
-    var interiorGroup = null, interiorActive = false, interiorBuiltType = null;
+    var interiorGroup = null, interiorActive = false, interiorBuiltType = null, interiorKey = null;
     function clearGroup(g) { for (var i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); }
     function showInterior(it) {
       if (!interiorGroup) { interiorGroup = new THREE.Group(); scene.add(interiorGroup); }
@@ -818,7 +818,7 @@
       box(9, 1.0, 0.25, 0, H - 1.0, D1 + 0.35, new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.6 })); // back sign
       var lamp1 = new THREE.PointLight(0xfff2d6, 2.6, 44); lamp1.position.set(0, H - 0.6, (D0 + D1) / 2 + 2); g.add(lamp1);
       var lamp2 = new THREE.PointLight(0xfff2d6, 1.5, 44); lamp2.position.set(0, H - 0.6, D1 + 3); g.add(lamp2);
-      box(13, 1.1, 1.6, 0, 0.55, D1 + 1.7, new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.5, metalness: 0.2 })); // counter
+      if (type !== 'apartment') box(13, 1.1, 1.6, 0, 0.55, D1 + 1.7, new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.5, metalness: 0.2 })); // counter (shops only)
       if (type === 'gun') {
         var gunMat = new THREE.MeshStandardMaterial({ color: 0x14161b, roughness: 0.5, metalness: 0.45 });
         var woodMat = new THREE.MeshStandardMaterial({ color: 0x5a3d22, roughness: 0.85 });
@@ -999,6 +999,122 @@
 
         // Mood ambient light — dim warm, low
         var moodLight = new THREE.PointLight(0xff9944, 1.4, 22); moodLight.position.set(2.0, 2.8, D1 + 7.0); g.add(moodLight);
+      } else if (type === 'apartment') {
+        // --- Furnished home (owned apartment) ---
+        // --- Materials ---
+        var aptFloorMat= new THREE.MeshStandardMaterial({ color: 0x8b6f47, roughness: 0.85, metalness: 0.0 }); // warm hardwood
+        var mattressMat= new THREE.MeshStandardMaterial({ color: 0xf5f0e8, roughness: 0.9,  metalness: 0.0 });
+        var headboardMat=new THREE.MeshStandardMaterial({ color: 0x5a3e28, roughness: 0.7,  metalness: 0.0 }); // dark walnut
+        var duvetMat   = new THREE.MeshStandardMaterial({ color: 0x8ab4d4, roughness: 0.95, metalness: 0.0 }); // dusty blue
+        var pillowMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9,  metalness: 0.0 });
+        var sofaMat    = new THREE.MeshStandardMaterial({ color: 0x4a4a5a, roughness: 0.85, metalness: 0.0 }); // charcoal fabric
+        var cushionMat = new THREE.MeshStandardMaterial({ color: 0x7a6a9a, roughness: 0.9,  metalness: 0.0 }); // purple-grey cushion
+        var tvPanelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4,  metalness: 0.3 });
+        var tvScreenMat= new THREE.MeshStandardMaterial({ color: 0x0a1a2a, roughness: 0.2,  metalness: 0.1, emissive: 0x0d3a5c, emissiveIntensity: 0.55 });
+        var consoleMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1a, roughness: 0.6,  metalness: 0.05 });
+        var tableTopMat= new THREE.MeshStandardMaterial({ color: 0x7a5c3a, roughness: 0.65, metalness: 0.05 });
+        var tableLegMat= new THREE.MeshStandardMaterial({ color: 0x2e1e0f, roughness: 0.5,  metalness: 0.1 });
+        var rugMat     = new THREE.MeshStandardMaterial({ color: 0x9b3a2a, roughness: 0.98, metalness: 0.0 }); // deep red rug
+        var wardrobeMat= new THREE.MeshStandardMaterial({ color: 0x4e3520, roughness: 0.7,  metalness: 0.05 });
+        var lampBaseMat= new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4,  metalness: 0.6 });
+        var lampShadeMat=new THREE.MeshStandardMaterial({ color: 0xfff4d6, roughness: 0.8,  metalness: 0.0, emissive: new THREE.Color(accent), emissiveIntensity: 0.9 });
+        var artMat1    = new THREE.MeshStandardMaterial({ color: 0xd4732a, roughness: 0.8,  metalness: 0.0, emissive: 0xd4732a, emissiveIntensity: 0.18 });
+        var artMat2    = new THREE.MeshStandardMaterial({ color: 0x2a6e5a, roughness: 0.8,  metalness: 0.0, emissive: 0x2a6e5a, emissiveIntensity: 0.18 });
+        var artFrameMat= new THREE.MeshStandardMaterial({ color: 0x1a1008, roughness: 0.5,  metalness: 0.15 });
+        var potMat     = new THREE.MeshStandardMaterial({ color: 0x7a4a2a, roughness: 0.85, metalness: 0.0 });
+        var foliageMat = new THREE.MeshStandardMaterial({ color: 0x2e6b2e, roughness: 0.9,  metalness: 0.0 });
+
+        // ─── 1. Floor overlay (warm hardwood) ───────────────────────────────────────
+        box(HW * 2 - 0.5, 0.04, (D0 - D1) - 0.5, 0, 0.12, (D0 + D1) / 2, aptFloorMat);
+
+        // ─── 2. Bed — back-LEFT corner (x ≈ -5.5, z near D1+3 = -10) ───────────────
+        // Bed frame base (platform)
+        box(4.2, 0.25, 6.2, -5.5, 0.12, -10.0, headboardMat);
+        // Mattress
+        box(4.0, 0.45, 5.8, -5.5, 0.49, -9.9, mattressMat);
+        // Headboard (against back-left wall, near z = D1 = -13)
+        box(4.2, 1.3, 0.18, -5.5, 0.85, -12.6, headboardMat);
+        // Duvet / blanket (slightly shorter than mattress, sitting on top)
+        box(3.8, 0.18, 4.2, -5.5, 0.96, -10.2, duvetMat);
+        // Pillow left
+        box(1.5, 0.22, 0.9, -6.2, 1.08, -12.0, pillowMat);
+        // Pillow right
+        box(1.5, 0.22, 0.9, -4.8, 1.08, -12.0, pillowMat);
+
+        // ─── 3. Sofa — RIGHT side, facing the TV on the back wall ───────────────────
+        // Seat base
+        box(4.2, 0.5, 1.8, 5.0, 0.45, -6.5, sofaMat);
+        // Backrest
+        box(4.2, 0.9, 0.38, 5.0, 0.97, -7.3, sofaMat);
+        // Left armrest
+        box(0.36, 0.72, 1.8, 2.97, 0.61, -6.5, sofaMat);
+        // Right armrest
+        box(0.36, 0.72, 1.8, 7.03, 0.61, -6.5, sofaMat);
+        // Cushion left
+        box(1.7, 0.26, 1.5, 4.0, 0.98, -6.4, cushionMat);
+        // Cushion right
+        box(1.7, 0.26, 1.5, 6.0, 0.98, -6.4, cushionMat);
+
+        // ─── 4. TV console (media stand) + TV panel — against back wall (z ≈ D1+0.6) ──
+        // Media console / stand
+        box(3.8, 0.55, 0.7, 3.0, 0.275, -12.55, consoleMat);
+        // TV panel body
+        box(3.4, 1.9, 0.12, 3.0, 1.8, -12.62, tvPanelMat);
+        // TV screen (emissive blue-teal glow)
+        box(3.1, 1.65, 0.06, 3.0, 1.85, -12.57, tvScreenMat);
+
+        // ─── 5. Coffee table — in front of sofa, OUT of central corridor ─────────────
+        // Table top (right side, x > 1.5, clear of corridor)
+        box(2.2, 0.12, 1.2, 4.8, 0.52, -5.0, tableTopMat);
+        // Table legs (four thin cylinders approximated as slim boxes)
+        box(0.1, 0.5, 0.1, 3.8,  0.25, -4.5, tableLegMat);
+        box(0.1, 0.5, 0.1, 5.8,  0.25, -4.5, tableLegMat);
+        box(0.1, 0.5, 0.1, 3.8,  0.25, -5.5, tableLegMat);
+        box(0.1, 0.5, 0.1, 5.8,  0.25, -5.5, tableLegMat);
+
+        // ─── 6. Rug — under coffee table (very thin slab) ───────────────────────────
+        box(3.6, 0.025, 3.2, 4.8, 0.105, -5.5, rugMat);
+
+        // ─── 7. Wardrobe — left side wall, mid-room area ────────────────────────────
+        box(2.6, 2.2, 1.0, -7.2, 1.1, -7.5, wardrobeMat);
+        // Wardrobe door detail (thin lighter inset panel)
+        box(2.3, 1.85, 0.07, -7.2, 1.12, -7.01, consoleMat);
+
+        // ─── 8. Floor lamp + PointLight — behind sofa-end, warm accent glow ─────────
+        // Lamp pole
+        var lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.8, 8), lampBaseMat);
+        lampPole.position.set(7.8, 0.9, -4.8);
+        g.add(lampPole);
+        // Lamp shade (cone)
+        var lampShade = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.55, 12), lampShadeMat);
+        lampShade.position.set(7.8, 2.1, -4.8);
+        g.add(lampShade);
+        // Lamp base disc
+        box(0.4, 0.06, 0.4, 7.8, 0.03, -4.8, lampBaseMat);
+        // Warm point light
+        var roomLight = new THREE.PointLight(0xffd9a0, 1.8, 16);
+        roomLight.position.set(7.8, 2.3, -4.8);
+        g.add(roomLight);
+
+        // ─── 9a. Framed wall art — on the left (x = -8.3) side wall ─────────────────
+        // Frame 1 — orange abstract
+        box(0.07, 1.1, 1.7, -8.28, 2.1, -9.0, artFrameMat);
+        box(0.04, 0.9, 1.45, -8.26, 2.1, -9.0, artMat1);
+        // Frame 2 — teal abstract
+        box(0.07, 1.1, 1.4, -8.28, 2.1, -11.5, artFrameMat);
+        box(0.04, 0.9, 1.15, -8.26, 2.1, -11.5, artMat2);
+
+        // ─── 9b. Potted plant — right of wardrobe ────────────────────────────────────
+        // Pot (cylinder approximated as a truncated box stack)
+        var plantPot = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.18, 0.45, 10), potMat);
+        plantPot.position.set(-5.4, 0.22, -7.5);
+        g.add(plantPot);
+        // Foliage (sphere)
+        var foliage = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), foliageMat);
+        foliage.position.set(-5.4, 1.0, -7.5);
+        g.add(foliage);
+        // Soil top disc
+        box(0.44, 0.04, 0.44, -5.4, 0.47, -7.5, consoleMat);
       } else {
         box(3.4, 1.0, 1.7, 0, 0.5, D1 + 6, new THREE.MeshStandardMaterial({ color: 0x3a2f4a, roughness: 0.7 }));  // realty desk
       }
@@ -1365,6 +1481,16 @@
         camera.position.y += (Math.random() * 2 - 1) * amp;
         camera.position.z += (Math.random() * 2 - 1) * amp;
       }
+      // Interiors are VIRTUAL rooms not in the city collision grid, so clearCamDist can't keep
+      // the cam inside (shops only worked because nearby building tiles happened to pull it in).
+      // Clamp the cam to the room box (matches buildInteriorRoom: HW=8.5, z∈[D1=-13, D0=0.5], H=5.2)
+      // so the chase cam stays inside regardless of where the door sits on the map.
+      if (W.interior) {
+        var _it = W.interior;
+        camera.position.x = clamp(camera.position.x, _it.baseX - 7.8, _it.baseX + 7.8);
+        camera.position.z = clamp(camera.position.z, _it.baseZ - 12.4, _it.baseZ + 0.1);
+        camera.position.y = Math.min(camera.position.y, 4.9);
+      }
       camera.lookAt(camTarget);
       camWasInCar = p.inCar;
     }
@@ -1495,9 +1621,11 @@
         playerG.rotation.set(playerG._leanP, playerVisYaw, playerG._leanR);
       } else { playerG._lx = playerG._lz = null; playerG._lpx = playerG._lpz = null; playerG._lvx = playerG._lvz = 0; playerVisYaw = p.yaw; }
 
-      // shop interior: render the enclosed room, hide the city + every street entity
-      if (W.interior && !interiorActive) showInterior(W.interior);
-      else if (!W.interior && interiorActive) hideInterior();
+      // shop/home interior: render the enclosed room, hide the city + every street entity.
+      // Key on interior IDENTITY (type+position) so an exit→enter within a single frame (no rAF
+      // tick between) still rebuilds — a plain !interiorActive gate would get stuck and skip it.
+      var iKey = W.interior ? (W.interior.type + '@' + W.interior.baseX + ',' + W.interior.baseZ) : null;
+      if (iKey !== interiorKey) { if (W.interior) showInterior(W.interior); else hideInterior(); interiorKey = iKey; }
       if (W.interior) {
         hideFrom(carPool, 0); hideFrom(policePool, 0); hideFrom(heliPool, 0);
         hideFrom(pedPool, 0); hideFrom(bulletPool, 0); hideFrom(pickupPool, 0);
@@ -1604,6 +1732,15 @@
       if (!W.player.inCar) {
         var nc = IN.nearestCar(4.5); if (nc) pr = nc.npc ? '[F] Carjack' : '[F] Enter vehicle';
         var ns = IN.nearestShop(5.5); if (ns && !W.currentShop) pr = '[B] Shop: ' + ns.name;
+        // F enters whichever interactable is CLOSEST (mirror tryEnterExit) so the prompt never lies:
+        // only show "[F] Enter home" when the home door beats a nearby car.
+        var homeI = IN.nearestProperty(4.0);
+        if (homeI >= 0) {
+          var _px = W.player.x, _pz = W.player.z, _pp = W.propPos[homeI];
+          var _hd = (_pp.x - _px) * (_pp.x - _px) + (_pp.z - _pz) * (_pp.z - _pz);
+          var _cd = nc ? (nc.x - _px) * (nc.x - _px) + (nc.z - _pz) * (nc.z - _pz) : 1e9;
+          if (_hd <= _cd) pr = '[F] Enter home';
+        }
         if (IN.nearestProperty(6) >= 0) pr = (pr ? pr + '   ' : '') + '[H] Lie low (safehouse)';
         if (!W.job && IN.nearestDepot(6.5)) pr = (pr ? pr + '   ' : '') + '[J] Courier job';
       } else { pr = '[F] Exit vehicle'; if (!W.job && IN.nearestDepot(6.5)) pr += '   [J] Courier job'; }
@@ -1682,7 +1819,9 @@
       var SHOPC = { gun: '#ff8c3a', car: '#5ad1ff', realty: '#b59cff', style: '#ff7ad9' };
       for (i = 0; i < W.shops.length; i++) { var sh = W.shops[i]; mctx.fillStyle = SHOPC[sh.type] || '#fff'; mctx.fillRect(sh.x * sc - 2.5, sh.z * sc - 2.5, 5, 5); }
       mctx.fillStyle = '#ffd23f'; for (i = 0; i < W.stores.length; i++) { if (W.stores[i].cooldown <= 0) { mctx.fillRect(W.stores[i].x * sc - 1.5, W.stores[i].z * sc - 1.5, 3, 3); } }
-      if (W.propPos) { mctx.fillStyle = '#6bf08a'; for (i = 0; i < W.ownedProps.length; i++) { var pp = W.propPos[W.ownedProps[i]]; if (pp) mctx.fillRect(pp.x * sc - 2.5, pp.z * sc - 2.5, 5, 5); } }
+      if (W.propPos) { mctx.fillStyle = '#6bf08a'; for (i = 0; i < W.ownedProps.length; i++) { var pp = W.propPos[W.ownedProps[i]]; if (pp) mctx.fillRect(pp.x * sc - 2.5, pp.z * sc - 2.5, 5, 5); }
+        // mark your HOME (respawn point) with a white ring so it stands out from other owned apartments
+        if (W.homePropIndex != null && W.propPos[W.homePropIndex]) { var hp = W.propPos[W.homePropIndex]; mctx.strokeStyle = '#ffffff'; mctx.lineWidth = 1.5; mctx.strokeRect(hp.x * sc - 4, hp.z * sc - 4, 8, 8); } }
       mctx.fillStyle = '#3a7bff'; for (i = 0; i < W.police.length; i++) mctx.fillRect(W.police[i].x * sc - 2, W.police[i].z * sc - 2, 4, 4);
       mctx.fillStyle = '#ffd23f'; mctx.fillRect(W.player.x * sc - 2.5, W.player.z * sc - 2.5, 5, 5);
     }
