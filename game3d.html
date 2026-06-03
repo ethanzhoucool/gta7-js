@@ -138,7 +138,7 @@
     <button id="mNew" class="primary">New Game</button>
     <button id="mCont">Continue</button>
     <button id="mCtrl">Controls</button>
-    <div id="mControls" class="mctrl" style="display:none">WASD move · Shift sprint · Space jump<br>F enter/exit · E rob (bank/store) · B shop · H safehouse<br>J courier job · 1–4 / Q weapon · click to aim/shoot</div>
+    <div id="mControls" class="mctrl" style="display:none">WASD move · Shift sprint · Space jump<br>F enter/exit · E rob (bank/store) · B shop · H safehouse<br>J courier job · 1–4 / Q / Tab weapon wheel · click to aim/shoot</div>
     <div class="mfoot">Original GTA-style sandbox · San Francisco · built in pure JS + Three.js</div>
   </div></div>
   <div id="wasted">WASTED</div>
@@ -2631,6 +2631,13 @@
     /* ----------------------------- Loop ----------------------------------- */
     var STEP = 1 / 60, acc = 0, last = 0;
     function buildInput(withEdges) {
+      // weapon wheel up: freeze player input (the sim keeps ticking) but keep the camera yaw
+      if (typeof wheelOpen !== 'undefined' && wheelOpen) {
+        return { forward: false, back: false, left: false, right: false, run: false, jump: false, handbrake: false,
+          aim: false, shoot: false, camYaw: camYaw, aimYaw: camYaw, aimPitch: 0, enterPressed: false, robPressed: false,
+          jumpPressed: false, buyPressed: false, cyclePressed: false, safehousePressed: false, jobPressed: false,
+          weaponCyclePressed: false, weaponSlot: -1 };
+      }
       var p = W.player, inCar = p.inCar;
       var spaceHeld = !!keys['Space'];
       var inp = {
@@ -2652,6 +2659,401 @@
       else { inp.weaponSlot = -1; } // only the first substep consumes the slot edge
       return inp;
     }
+
+    /* ===================== Weapon wheel (Tab to open) ===================== */
+    /*
+     * p7_weaponwheel.js — GTA-style radial weapon wheel overlay
+     *
+     * DROP-IN FRAGMENT for game3d.html.  Paste this block anywhere inside the
+     * outer IIFE, AFTER the engine vars (W, IN, gameStarted) are declared and
+     * BEFORE the frame() loop starts.  No HTML changes required — the canvas is
+     * created in JS below.
+     *
+     * ── API exposed to the host ──────────────────────────────────────────────
+     *   wheelOpen          (var)  — true while the wheel is visible
+     *   drawWeaponWheel()  (fn)   — call once per frame when wheelOpen is true
+     *
+     * ── Integration hooks (see "INTEGRATION POINTS" section at the bottom) ───
+     *   1. Add Tab handling to the existing keydown / keyup listeners.
+     *   2. Add a mousemove listener (or reuse the existing one, see note).
+     *   3. Gate normal input + normal rendering when wheelOpen is true.
+     *   4. Call drawWeaponWheel() in frame() when wheelOpen is true.
+     */
+
+    // ── 1. Create the wheel canvas ───────────────────────────────────────────
+    var wheelCanvas = document.createElement('canvas');
+    wheelCanvas.width  = 360;
+    wheelCanvas.height = 360;
+    wheelCanvas.style.cssText = [
+        'position:fixed',
+        'left:50%',
+        'top:50%',
+        'width:360px',
+        'height:360px',
+        'margin-left:-180px',
+        'margin-top:-180px',
+        'display:none',
+        'pointer-events:none',
+        'z-index:100',
+        'image-rendering:auto'
+    ].join(';');
+    document.body.appendChild(wheelCanvas);
+    var wheelCtx = wheelCanvas.getContext('2d');
+
+    // ── 2. State ─────────────────────────────────────────────────────────────
+    var wheelOpen       = false;   // public — host can read to gate input/render
+    var wheelHighlight  = 0;       // sector index currently under cursor
+    var wheelMouseAngle = null;    // radians from atan2; null = no mouse yet this open
+
+    // ── 3. Geometry constants ─────────────────────────────────────────────────
+    var WW_CX  = 180, WW_CY = 180;   // canvas centre
+    var WW_R_IN  = 48;                // inner hub radius
+    var WW_R_OUT = 160;               // outer ring edge
+    var WW_R_MID = (WW_R_IN + WW_R_OUT) / 2;  // label arc midpoint
+
+    // ── 4. Colour palette ─────────────────────────────────────────────────────
+    var WW_COL_RING_DARK   = 'rgba(10,12,20,0.88)';   // sector fill – un-owned
+    var WW_COL_RING_DIM    = 'rgba(28,32,48,0.88)';   // sector fill – owned, not selected
+    var WW_COL_RING_HI     = 'rgba(42,38,14,0.95)';   // sector fill – highlighted
+    var WW_COL_BORDER      = 'rgba(255,255,255,0.10)'; // thin divider lines
+    var WW_COL_BORDER_HI   = '#ffd23f';                // highlighted border
+    var WW_COL_TEXT_OWNED  = 'rgba(255,255,255,0.92)'; // owned weapon label
+    var WW_COL_TEXT_UNOWN  = 'rgba(120,120,150,0.55)'; // un-owned weapon label
+    var WW_COL_TEXT_HI     = '#ffd23f';                // highlighted weapon label
+    var WW_COL_HUB_BG      = 'rgba(10,12,20,0.94)';   // centre hub fill
+    var WW_COL_HUB_RING    = 'rgba(255,210,63,0.55)';  // hub ring stroke
+    var WW_COL_HUB_NAME    = '#ffffff';                // hub weapon name
+    var WW_COL_HUB_STAT    = 'rgba(180,200,220,0.85)'; // hub stat line
+    var WW_COL_TICK_OWNED  = '#6bf08a';                // small owned-dot indicator
+
+    // ── 5. Main draw function ─────────────────────────────────────────────────
+    function drawWeaponWheel() {
+        if (!wheelOpen) return;
+
+        // Guard: engine may not be ready on very first frame
+        if (!IN || !IN.WEAPON_ORDER || !W || !W.player) return;
+
+        var order  = IN.WEAPON_ORDER;      // ['pistol','smg','shotgun','rifle']
+        var defs   = IN.WEAPON_DEFS;       // { pistol:{name,dmg,cd,...}, ... }
+        var owned  = W.player.weapons || {};
+        var curId  = W.player.weapon || order[0];
+        var N      = order.length;
+
+        if (N < 1) return;  // nothing to draw
+
+        // Decide highlighted sector from mouse angle (angle 0 = top, clockwise)
+        // Sectors are laid out clockwise starting from the top so sector 0 occupies
+        // the arc centred at 12 o'clock.
+        if (wheelMouseAngle !== null) {
+            // wheelMouseAngle is the raw atan2 result in [-PI, PI], 0 = right.
+            // Rotate so 0 = top: subtract PI/2 then normalise to [0, 2PI).
+            var norm = (wheelMouseAngle - (-Math.PI / 2) + Math.PI * 4) % (Math.PI * 2);
+            wheelHighlight = Math.floor(norm / (Math.PI * 2) * N + 0.5) % N;
+        }
+
+        var ctx = wheelCtx;
+        ctx.clearRect(0, 0, wheelCanvas.width, wheelCanvas.height);
+        ctx.save();
+        // Global anti-alias hint (canvas 2D always AA-draws arcs; enabling font smoothing via imageSmoothingEnabled helps text).
+        ctx.imageSmoothingEnabled = true;
+
+        var sliceAngle = (Math.PI * 2) / N;
+        // Start each sector at the TOP (-PI/2) and go clockwise.
+        var startBase  = -Math.PI / 2;
+
+        // ── Draw sectors ──────────────────────────────────────────────────────
+        for (var i = 0; i < N; i++) {
+            var id    = order[i];
+            var def   = (defs && defs[id]) ? defs[id] : { name: id, dmg: 0, cd: 0 };
+            var isOwned = !!(owned[id]);
+            var isHi    = (i === wheelHighlight);
+
+            var a0 = startBase + i * sliceAngle + 0.012;  // tiny gap between slices
+            var a1 = startBase + (i + 1) * sliceAngle - 0.012;
+
+            // Sector fill
+            ctx.beginPath();
+            ctx.moveTo(WW_CX, WW_CY);
+            ctx.arc(WW_CX, WW_CY, WW_R_OUT, a0, a1);
+            ctx.closePath();
+
+            if (isHi) {
+                ctx.fillStyle = WW_COL_RING_HI;
+            } else if (isOwned) {
+                ctx.fillStyle = WW_COL_RING_DIM;
+            } else {
+                ctx.fillStyle = WW_COL_RING_DARK;
+            }
+            ctx.fill();
+
+            // Sector border
+            ctx.beginPath();
+            ctx.moveTo(WW_CX, WW_CY);
+            ctx.arc(WW_CX, WW_CY, WW_R_OUT, a0, a1);
+            ctx.closePath();
+            ctx.strokeStyle = isHi ? WW_COL_BORDER_HI : WW_COL_BORDER;
+            ctx.lineWidth   = isHi ? 2 : 1;
+            ctx.stroke();
+
+            // Inner arc (donut cutout visual — ring only, not a solid pie)
+            // Punch out an inner circle via a composite arc drawn over hub area later,
+            // but draw a visible inner ring border now.
+            ctx.beginPath();
+            ctx.arc(WW_CX, WW_CY, WW_R_IN + 1, a0, a1);
+            ctx.strokeStyle = isHi ? WW_COL_BORDER_HI : WW_COL_BORDER;
+            ctx.lineWidth   = 1;
+            ctx.stroke();
+
+            // ── Weapon name label ──────────────────────────────────────────
+            var aMid    = startBase + (i + 0.5) * sliceAngle;
+            var labelR  = WW_R_MID + 4;
+            var lx      = WW_CX + Math.cos(aMid) * labelR;
+            var ly      = WW_CY + Math.sin(aMid) * labelR;
+
+            ctx.save();
+            ctx.translate(lx, ly);
+            // Don't rotate text — keep it always upright for readability
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font         = isHi ? 'bold 13px -apple-system,Arial,sans-serif' : '12px -apple-system,Arial,sans-serif';
+
+            if (isHi) {
+                ctx.fillStyle = WW_COL_TEXT_HI;
+            } else if (isOwned) {
+                ctx.fillStyle = WW_COL_TEXT_OWNED;
+            } else {
+                ctx.fillStyle = WW_COL_TEXT_UNOWN;
+            }
+
+            ctx.fillText(def.name || id, 0, 0);
+
+            // Tiny owned-dot indicator below the name
+            if (isOwned && !isHi) {
+                ctx.fillStyle = WW_COL_TICK_OWNED;
+                ctx.beginPath();
+                ctx.arc(0, 10, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        // ── Outer ring stroke ─────────────────────────────────────────────────
+        ctx.beginPath();
+        ctx.arc(WW_CX, WW_CY, WW_R_OUT, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+
+        // ── Centre hub ────────────────────────────────────────────────────────
+        ctx.beginPath();
+        ctx.arc(WW_CX, WW_CY, WW_R_IN, 0, Math.PI * 2);
+        ctx.fillStyle = WW_COL_HUB_BG;
+        ctx.fill();
+        ctx.strokeStyle = WW_COL_HUB_RING;
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+
+        // Hub text: current highlighted weapon name + one stat line
+        var hiId  = order[wheelHighlight] || order[0];
+        var hiDef = (defs && defs[hiId]) ? defs[hiId] : { name: hiId, dmg: 0, cd: 1 };
+        var hiOwned = !!(owned[hiId]);
+
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Name
+        ctx.font      = 'bold 10px -apple-system,Arial,sans-serif';
+        ctx.fillStyle = hiOwned ? WW_COL_HUB_NAME : WW_COL_TEXT_UNOWN;
+        ctx.fillText((hiDef.name || hiId).toUpperCase(), WW_CX, WW_CY - 9);
+
+        // Stat: DMG + Rate of Fire (derived from cooldown, lower cd = faster)
+        var dmg = (hiDef.dmg != null) ? hiDef.dmg : '?';
+        var rof = (hiDef.cd != null && hiDef.cd > 0) ? (1 / hiDef.cd).toFixed(1) : '?';
+        var statLine = 'DMG ' + dmg + '  ·  RoF ' + rof;
+        ctx.font      = '8px -apple-system,Arial,sans-serif';
+        ctx.fillStyle = hiOwned ? WW_COL_HUB_STAT : WW_COL_TEXT_UNOWN;
+        ctx.fillText(statLine, WW_CX, WW_CY + 6);
+
+        // Unowned tag
+        if (!hiOwned) {
+            ctx.font      = 'bold 8px -apple-system,Arial,sans-serif';
+            ctx.fillStyle = 'rgba(255,100,100,0.75)';
+            ctx.fillText('NOT OWNED', WW_CX, WW_CY + 17);
+        }
+
+        ctx.restore();
+    }
+
+    // ── 6. Tab keydown / keyup — open & close the wheel ──────────────────────
+    //
+    // INTEGRATION: find the existing keydown listener and ADD the two Tab blocks
+    // shown below into it.  Also add the keyup block into the existing keyup
+    // listener. The exact lines to modify are marked with ← INSERT AFTER / ←.
+    //
+    // Inside the existing keydown handler (around line 2009 in game3d.html):
+    //
+    //   document.addEventListener('keydown', function (e) {
+    //     if (!keys[e.code]) {
+    //       if (e.code === 'KeyF') justF = true;
+    //       ...
+    //       ← INSERT AFTER THE LAST "if (e.code === ...)" BLOCK:
+    //       if (e.code === 'Tab' && gameStarted && !wheelOpen) {
+    //           e.preventDefault();
+    //           wheelOpen = true;
+    //           wheelHighlight = 0;
+    //           wheelMouseAngle = null;
+    //           // Reset highlight to the currently equipped weapon
+    //           if (IN && IN.WEAPON_ORDER) {
+    //               var _curIdx = IN.WEAPON_ORDER.indexOf(W.player.weapon || '');
+    //               if (_curIdx >= 0) wheelHighlight = _curIdx;
+    //           }
+    //           wheelCanvas.style.display = 'block';
+    //       }
+    //     }
+    //     keys[e.code] = true;
+    //     if (...) e.preventDefault();  ← keep existing
+    //     if (e.code === 'Tab') e.preventDefault();  ← ADD this so Tab never changes focus
+    //   });
+    //
+    // Inside the existing keyup handler (around line 2020):
+    //
+    //   document.addEventListener('keyup', function (e) {
+    //       keys[e.code] = false;
+    //       ← INSERT:
+    //       if (e.code === 'Tab' && wheelOpen) {
+    //           wheelOpen = false;
+    //           wheelCanvas.style.display = 'none';
+    //           // Select highlighted weapon only if player owns it
+    //           if (IN && IN.WEAPON_ORDER && W && W.player && W.player.weapons) {
+    //               var _selId = IN.WEAPON_ORDER[wheelHighlight];
+    //               if (_selId && W.player.weapons[_selId]) {
+    //                   IN.switchWeapon(_selId);
+    //               }
+    //           }
+    //       }
+    //   });
+
+    // Standalone listeners (add these if you prefer not to modify the existing handlers):
+    document.addEventListener('keydown', function (e) {
+        if (e.code !== 'Tab') return;
+        e.preventDefault();
+        if (!gameStarted || wheelOpen) return;
+        wheelOpen = true;
+        wheelHighlight = 0;
+        wheelMouseAngle = null;
+        // Initialise highlight to the currently equipped weapon
+        if (IN && IN.WEAPON_ORDER) {
+            var idx = IN.WEAPON_ORDER.indexOf(W.player ? (W.player.weapon || '') : '');
+            if (idx >= 0) wheelHighlight = idx;
+        }
+        wheelCanvas.style.display = 'block';
+    });
+
+    document.addEventListener('keyup', function (e) {
+        if (e.code !== 'Tab') return;
+        if (!wheelOpen) return;
+        wheelOpen = false;
+        wheelCanvas.style.display = 'none';
+        // Commit selection — only if weapon is owned
+        if (IN && IN.WEAPON_ORDER && W && W.player && W.player.weapons) {
+            var selId = IN.WEAPON_ORDER[wheelHighlight];
+            if (selId && W.player.weapons[selId]) {
+                IN.switchWeapon(selId);
+            }
+        }
+    });
+
+    // ── 7. Mouse-angle tracking ───────────────────────────────────────────────
+    //
+    // INTEGRATION NOTE: the existing mousemove listener (line ~2023) fires only
+    // when the pointer is LOCKED (pointer-lock mode). While the wheel is open we
+    // want unlocked mouse angle as well.  Two options:
+    //
+    //   A. Add a SECOND mousemove listener below — it tracks the mouse in page
+    //      coordinates and converts to an angle from screen centre.  This works
+    //      even without pointer lock and doesn't conflict with camera rotation
+    //      because we gate weapon selection behind wheelOpen.  Recommended.
+    //
+    //   B. Alternatively, inside the existing locked mousemove listener, add:
+    //      if (wheelOpen) { _wwMouseX = e.clientX; _wwMouseY = e.clientY; }
+    //      and compute the angle there instead.
+    //
+    // We use option A here:
+
+    document.addEventListener('mousemove', function (e) {
+        if (!wheelOpen) return;
+        var cx = window.innerWidth  / 2;
+        var cy = window.innerHeight / 2;
+        wheelMouseAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
+    });
+
+    // Arrow-key / scroll cycling (fallback when no mouse, e.g. handheld keyboard):
+    document.addEventListener('keydown', function (e) {
+        if (!wheelOpen) return;
+        if (e.code !== 'ArrowLeft' && e.code !== 'ArrowRight' &&
+            e.code !== 'ArrowUp'   && e.code !== 'ArrowDown') return;
+        e.preventDefault();
+        var N = (IN && IN.WEAPON_ORDER) ? IN.WEAPON_ORDER.length : 1;
+        if (e.code === 'ArrowLeft' || e.code === 'ArrowUp') {
+            wheelHighlight = (wheelHighlight - 1 + N) % N;
+        } else {
+            wheelHighlight = (wheelHighlight + 1) % N;
+        }
+        wheelMouseAngle = null; // override mouse angle while using keys
+    });
+
+    /*
+     * ── INTEGRATION POINTS SUMMARY ──────────────────────────────────────────
+     *
+     * 1. OPEN / CLOSE LISTENERS
+     *    The standalone Tab keydown/keyup listeners in this file are fully
+     *    self-contained and can be pasted verbatim — they do not require editing
+     *    the existing keydown/keyup blocks.  The existing listeners handle all
+     *    other keys; these add Tab on top.  Tab default (focus-cycle) is always
+     *    suppressed via e.preventDefault() in both places.
+     *
+     * 2. PER-FRAME DRAW CALL
+     *    Inside frame(), after updateHUD() (or anywhere after sync()), add:
+     *
+     *      if (wheelOpen) drawWeaponWheel();
+     *
+     *    That's all — drawWeaponWheel() is a plain canvas-2D paint call with no
+     *    Three.js dependencies and takes < 0.5 ms per frame.
+     *
+     * 3. INPUT GATING WHILE WHEEL IS OPEN
+     *    When wheelOpen is true you may want to suppress normal shooting / movement.
+     *    The cleanest approach: in buildInput(), add a short-circuit at the top:
+     *
+     *      if (wheelOpen) return { forward:false, back:false, left:false,
+     *                              right:false, run:false, jump:false,
+     *                              handbrake:false, aim:false, shoot:false,
+     *                              camYaw: camYaw, aimYaw: camYaw,
+     *                              aimPitch:0, enterPressed:false,
+     *                              robPressed:false, jumpPressed:false,
+     *                              buyPressed:false, cyclePressed:false,
+     *                              safehousePressed:false, jobPressed:false,
+     *                              weaponCyclePressed:false, weaponSlot:-1 };
+     *
+     *    This prevents firing, movement and all action-edges while the wheel is up.
+     *    Camera rotation is still passed through (camYaw) so the view doesn't snap.
+     *    The engine continues stepping normally — only player-input is zeroed.
+     *
+     *    If you also want a slow-motion "bullet time" feel, add:
+     *
+     *      var STEP_WHEEL = 1 / 120;  // half-speed substep
+     *      // in frame() replace STEP with (wheelOpen ? STEP_WHEEL : STEP) in eng.step()
+     *
+     * 4. SINGLE-WEAPON / MISSING-WEAPON GUARDS
+     *    - If WEAPON_ORDER has only 1 entry the wheel draws a single full-circle
+     *      sector with no dividers — still valid and readable.
+     *    - Every access to W.player.weapons[id] is guarded with a !! cast, so a
+     *      missing key returns false (dimmed) rather than throwing.
+     *    - If WEAPON_DEFS lacks an entry for an id the code falls back to
+     *      { name: id, dmg: 0, cd: 1 } so no crash occurs.
+     *    - If W.player or W.player.weapons is null/undefined the function returns
+     *      early (second guard at the top of drawWeaponWheel).
+     */
 
     function frame(ts) {
       requestAnimationFrame(frame);
@@ -2684,6 +3086,7 @@
       if (W.heist && W.heist.stage === 'escape') { heistMarker.visible = true; heistMarker.position.set(W.heist.dropX, 0, W.heist.dropZ); heistMarker.children[1].position.y = 16.8 + Math.sin(W.time * 3) * 0.5; }
       else if (heistMarker.visible) heistMarker.visible = false;
       updateHUD();
+      if (wheelOpen) drawWeaponWheel();
       if (gameStarted && menuEl && menuEl.style.display !== 'none') menuEl.style.display = 'none';
       // tutorial banner (engine-driven step text)
       if (gameStarted && W.tutorial && W.tutorial.text) { tutEl.textContent = W.tutorial.text; tutEl.style.display = 'block'; }
