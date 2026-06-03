@@ -1346,7 +1346,8 @@
         carTxt = ' &nbsp; <span style="color:' + col + '">🚗' + ch + (W.playerCar.onFire ? ' 🔥' : '') + '</span>';
       }
       var wname = (IN.currentWeaponDef && IN.currentWeaponDef().name) || 'Pistol';
-      elInfo.innerHTML = '$' + W.money + ' &nbsp; <span style="color:#9fd6ff">NW $' + (W.netWorth || 0) + '</span>' +
+      var money$ = function (n) { return '$' + (n | 0).toLocaleString('en-US'); };
+      elInfo.innerHTML = '<b>' + money$(W.money) + '</b> &nbsp; <span style="color:#9fd6ff" title="net worth (cash + property + car)">net ' + money$(W.netWorth || 0) + '</span>' +
         (W.player.armor > 0 ? ' &nbsp; <span style="color:#7fd1ff">🛡' + Math.round(W.player.armor) + '</span>' : '') +
         carTxt + ' &nbsp; <span style="color:#ffd27f">🔫 ' + wname + '</span>' +
         ' &nbsp; ' + (W.player.inCar ? '[CAR]' : '[FOOT]');

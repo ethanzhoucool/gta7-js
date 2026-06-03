@@ -48,7 +48,7 @@
   var PLAYER_WALK = 7.5;    // units/s
   var PLAYER_RUN = 12.5;
   var PLAYER_ACCEL = 60;    // ground accel
-  var PLAYER_JUMP = 9.5;
+  var PLAYER_JUMP = 11;
   var PLAYER_MAX_HP = 100;
 
   // Car physics
@@ -79,6 +79,10 @@
   var COP_GIVEUP_DIST = 140; // despawn a foot cop once the player has escaped
   // SWAT (5★): tougher foot officers with better guns.
   var SWAT_HP = 130, SWAT_FIRE_CD = 0.6, SWAT_DMG = 16;
+  // GTA-style escalation: cops draw + telegraph before opening fire, and the responding-car
+  // count ramps gradually per star instead of swarming instantly.
+  var COP_AIM_WARMUP = 0.9, SWAT_AIM_WARMUP = 0.5;   // seconds of "freeze!" before a cop fires
+  var CARS_BY_STAR = [0, 1, 2, 3, 4, 5];             // responding cruisers per wanted level (was wanted+1)
   // Vehicle damage (the player's car has its own HP, separate from the player).
   var PCAR_HP = 200;          // player car starts here; takes ram/crash/bullet damage
   // Helicopter (4★+): hovers above the player and fires down; killable.
@@ -291,6 +295,7 @@
       p.hp = swat ? SWAT_HP : COP_HP;
       p.color = swat ? 0x20242b : 0x1b2a4a; // SWAT near-black, beat cop navy
       p.fireCd = rand(0.2, 0.6); p.strafeSign = (hash2((x | 0), (z | 0)) < 0.5) ? 1 : -1;
+      p.aimWarmup = swat ? SWAT_AIM_WARMUP : COP_AIM_WARMUP; // telegraph timer before first shot
       return p;
     }
     function makePolice(x, z) { var c = makeCar(x, z, 'police'); c.color = 0x101820; c.hp = 120; c.vacant = false; c.deployed = false; return c; }
@@ -491,7 +496,10 @@
       rate += gangZoneIncome(); // captured turf pays too
       if (rate <= 0) return;
       W.incomeAccrued += rate * dt;
-      if (W.incomeAccrued >= 1) { var paid = Math.floor(W.incomeAccrued); W.money += paid; W.incomeAccrued -= paid; }
+      if (W.incomeAccrued >= 1) { var paid = Math.floor(W.incomeAccrued); W.money += paid; W.incomeAccrued -= paid; W.rentBatch = (W.rentBatch || 0) + paid; }
+      // batch a rent notification every ~20s so property income is FELT, not silent
+      W.rentClock = (W.rentClock || 0) + dt;
+      if (W.rentClock >= 20 && W.rentBatch > 0) { post('@bank', '🏦 Rent collected: +$' + W.rentBatch); popCash(W.rentBatch); W.rentClock = 0; W.rentBatch = 0; }
     }
     function makeGoals() {
       return [
@@ -581,7 +589,7 @@
 
     /* ============================ COURIER JOBS =========================== */
     var DEPOT_DEFS = [{ tx: 64, tz: 30 }, { tx: 12, tz: 50 }, { tx: 66, tz: 70 }, { tx: 30, tz: 12 }]; // 3 in SF + 1 in Marin
-    var JOB_RADIUS = 6.5, JOB_TARGET_SPEED = 18, JOB_GRACE = 6, JOB_RATE = 2.2, JOB_STREAK_STEP = 60;
+    var JOB_RADIUS = 6.5, JOB_TARGET_SPEED = 18, JOB_GRACE = 6, JOB_RATE = 3.0, JOB_STREAK_STEP = 60;
     // GTA-taxi model (researched): a SMALL base fare; the real money is the consecutive
     // -delivery STREAK bonus (+JOB_STREAK_STEP per chain tier) that resets if you fail.
     // A speed bonus rewards delivering with time to spare (the variable-reward layer).
@@ -591,7 +599,7 @@
       var dest = roadNear(fromX, fromZ, 60, 160) || randomRoad();
       var dd = dist(fromX, fromZ, dest.x, dest.z);
       var tmax = dd / JOB_TARGET_SPEED + JOB_GRACE;
-      W.job = { dropX: dest.x, dropZ: dest.z, dist: dd, timeMax: tmax, timeLeft: tmax, base: Math.round(25 + dd * JOB_RATE) };
+      W.job = { dropX: dest.x, dropZ: dest.z, dist: dd, timeMax: tmax, timeLeft: tmax, base: Math.round(75 + dd * JOB_RATE) };
       post('@Dispatch', '📦 Fare to ' + districtName(dest.x, dest.z) + ' — $' + W.job.base + ' (' + Math.round(tmax) + 's)');
     }
     function acceptJob() { if (W.job) return false; if (!nearestDepot(JOB_RADIUS)) return false; offerJob(W.player.x, W.player.z); return true; }
@@ -780,8 +788,9 @@
         if (!p.alive) continue;
         if (d2(p.x, p.z, x, z) < WITNESS_RANGE * WITNESS_RANGE && lineOfSight(p.x, p.z, x, z)) {
           p.panic = Math.max(p.panic, 3);
-          if (W.wanted >= 1) immediate = true;
-          else if (!p.witness) { p.witness = true; p.reportTimer = REPORT_DELAY; p.reportLevel = Math.max(p.reportLevel, severity); }
+          // A fresh witness calls it in after a delay — HALF delay if you're already hot (still
+          // a beat to break line of sight) — instead of instantly re-pinning your location.
+          if (!p.witness) { p.witness = true; p.reportTimer = (W.wanted >= 1 ? REPORT_DELAY * 0.5 : REPORT_DELAY); p.reportLevel = Math.max(p.reportLevel, severity); }
           else p.reportLevel = Math.max(p.reportLevel, severity); // a worse crime upgrades a pending report
         }
       }
@@ -832,7 +841,7 @@
       if (p.jumpBuffer > 0) p.jumpBuffer -= dt;
       // Only the PRESS edge arms the buffer — holding jump must not bunny-hop on landing.
       if (input.jumpPressed) p.jumpBuffer = 0.12;
-      if (p.jumpBuffer > 0 && (p.onGround || p.coyote > 0)) { p.vy = PLAYER_JUMP; p.onGround = false; p.coyote = 0; p.jumpBuffer = 0; }
+      if (p.jumpBuffer > 0 && (p.onGround || p.coyote > 0)) { p.vy = PLAYER_JUMP; if (p.moving) { p.vx *= 1.15; p.vz *= 1.15; } p.onGround = false; p.coyote = 0; p.jumpBuffer = 0; } // small forward carry into a running jump
       p.vy -= GRAVITY * dt;
       p.y += p.vy * dt;
       if (p.y <= 0) { p.y = 0; p.vy = 0; if (!p.onGround) p.coyote = 0; p.onGround = true; }
@@ -1035,13 +1044,19 @@
       if (mvx || mvz) { p.speed = Math.hypot(mvx, mvz); moveCircle(p, p.x + mvx * dt, p.z + mvz * dt, PLAYER_RADIUS); } else p.speed = 0;
       p.fireCd -= dt;
       var frange = p.swat ? COP_FIRE_RANGE + 6 : COP_FIRE_RANGE;
-      if (d < frange && p.fireCd <= 0 && lineOfSight(p.x, p.z, pl.x, pl.z) && !(pl.y > 3)) {
-        p.fireCd = p.swat ? SWAT_FIRE_CD : COP_FIRE_CD;
-        var a = Math.atan2(pl.x - p.x, pl.z - p.z) + rand(-0.04, 0.04);
-        var bd = p.swat ? SWAT_DMG : 9;
-        W.bullets.push(makeBullet(p.x + Math.sin(a) * 1.0, 1.1, p.z + Math.cos(a) * 1.0, Math.sin(a), 0, Math.cos(a), 'police', bd));
-        fx('muzzle', p.x + Math.sin(a) * 1.0, 1.1, p.z + Math.cos(a) * 1.0);
-      }
+      var canSee = d < frange && lineOfSight(p.x, p.z, pl.x, pl.z) && !(pl.y > 3);
+      if (canSee) {
+        // telegraph: hold a brief aim/warning before opening fire (GTA "freeze!" beat);
+        // resets whenever line of sight breaks so re-acquiring you re-telegraphs.
+        p.aimWarmup -= dt;
+        if (p.aimWarmup <= 0 && p.fireCd <= 0) {
+          p.fireCd = p.swat ? SWAT_FIRE_CD : COP_FIRE_CD;
+          var a = Math.atan2(pl.x - p.x, pl.z - p.z) + rand(-0.04, 0.04);
+          var bd = p.swat ? SWAT_DMG : 9;
+          W.bullets.push(makeBullet(p.x + Math.sin(a) * 1.0, 1.1, p.z + Math.cos(a) * 1.0, Math.sin(a), 0, Math.cos(a), 'police', bd));
+          fx('muzzle', p.x + Math.sin(a) * 1.0, 1.1, p.z + Math.cos(a) * 1.0);
+        }
+      } else { p.aimWarmup = p.swat ? SWAT_AIM_WARMUP : COP_AIM_WARMUP; }
     }
     // Returns false if the ped should be removed from W.peds (a dead cop). The caller
     // (the backward-iterating ped loop) splices it out — keeps cops from respawning.
@@ -1338,7 +1353,7 @@
 
     /* ----- police ----- */
     function managePolice(dt) {
-      var want = W.wanted >= 1 ? W.wanted + 1 : 0;
+      var want = CARS_BY_STAR[W.wanted] || 0;
       if (W.police.length < want && (W.time % 0.7) < dt) {
         var sx = W.lkpValid ? W.lkpX : W.player.x, sz = W.lkpValid ? W.lkpZ : W.player.z;
         // spawn OUTSIDE sight range (> POLICE_SIGHT) so cruisers never pop into view
@@ -1449,7 +1464,7 @@
       var p = W.player, r = p.inCar ? 2.4 : 1.8;
       for (var i = W.pickups.length - 1; i >= 0; i--) { var pk = W.pickups[i];
         if (d2(pk.x, pk.z, p.x, p.z) < (r + 0.6) * (r + 0.6)) {
-          if (pk.type === 'cash') { var ca = randInt(25, 90); W.money += ca; popCash(ca, pk.x, pk.z); fx('cash', pk.x, 1, pk.z); }
+          if (pk.type === 'cash') { var ca = randInt(40, 120); W.money += ca; popCash(ca, pk.x, pk.z); fx('cash', pk.x, 1, pk.z); }
           else { p.hp = clamp(p.hp + 35, 0, PLAYER_MAX_HP); fx('health', pk.x, 1, pk.z); }
           var np = randomRoad(); pk.x = np.x; pk.z = np.z; // recycle
         }
@@ -1563,7 +1578,7 @@
         lineOfSight: lineOfSight, circleHitsSolid: circleHitsSolid, nearestCar: nearestCar, reset: reset, alertPolice: alertPolice,
         hurtPlayer: hurtPlayer, buyItem: buyItem, shopCatalog: shopCatalog, nearestShop: nearestShop, nearestProperty: nearestProperty,
         robStore: robStore, enterSafehouse: enterSafehouse, enterShop: enterShop, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
-        killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot,
+        killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot, makeCopFoot: makeCopFoot,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,
         WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed }

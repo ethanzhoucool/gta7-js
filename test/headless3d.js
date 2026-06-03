@@ -411,6 +411,7 @@ function run() {
     CW.player.inCar = false; var dep = CW.jobDepots[0]; var pays = [];
     for (var n = 0; n < 11; n++) {
       if (!CW.job) { CW.player.x = dep.x; CW.player.z = dep.z; IN.acceptJob(); }
+      CW.job.base = 100; // pin the distance-based base so this measures the STREAK bonus, not random fare distance
       var m0 = CW.money; CW.player.x = CW.job.dropX; CW.player.z = CW.job.dropZ; ce.step(STEP, {}); pays.push(CW.money - m0);
     }
     assert.ok(pays[9] > pays[1], 'courier streak pay should escalate (' + pays[1] + ' -> ' + pays[9] + ')');
@@ -696,6 +697,60 @@ function run() {
     BW.player.barBuff = 3; BW.player.hp = 0;
     for (k = 0; k < 400; k++) { be.step(STEP, {}); if (k > 5 && BW.state === 'play' && BW.player.hp > 0) break; }
     assert.strictEqual(BW.player.barBuff, 0, 'bar buff is cleared on respawn');
+  })();
+
+  // 9r) Police escalation is GRADUAL + telegraphed (the "aggro too fast" fix).
+  (function aggroChecks() {
+    // (a) responding car count ramps per star, not wanted+1 swarm
+    var ce = GTA3D.createEngine(), CW = ce.world;
+    for (var z = 0; z < ce.constants.MAP; z++) for (var x = 0; x < ce.constants.MAP; x++) CW.grid[z][x] = ce.constants.T_ROAD;
+    for (var pi = 0; pi < CW.peds.length; pi++) CW.peds[pi].alive = false;
+    CW.player.inCar = false; CW.player.x = 300; CW.player.z = 300;
+    for (var k = 0; k < 600; k++) { CW.player.x = 300; CW.player.z = 300; CW.wanted = 3; CW.lkpValid = true; CW.lkpX = 300; CW.lkpZ = 300; ce.step(STEP, {}); }
+    assert.ok(CW.police.length <= 3, 'at 3★ no more than 3 cruisers respond (gradual, was wanted+1) — got ' + CW.police.length);
+
+    // (b) a foot cop TELEGRAPHS before firing — no police bullet in the first ~0.5s of LOS,
+    //     but it does open fire after the ~0.9s warmup.
+    var fe = GTA3D.createEngine(), FW = fe.world, FIN = fe._internal;
+    for (z = 0; z < fe.constants.MAP; z++) for (x = 0; x < fe.constants.MAP; x++) FW.grid[z][x] = fe.constants.T_ROAD;
+    for (pi = 0; pi < FW.peds.length; pi++) FW.peds[pi].alive = false;
+    FW.player.inCar = false; FW.player.x = 200; FW.player.z = 200; FW.player.hp = FW.player.maxHp; FW.player.armor = 100;
+    var cop = FIN.makeCopFoot(216, 200, false); FW.peds.push(cop); // 16u away, clear LOS on all-road
+    function policeBullets(W2) { return W2.bullets.filter(function (b) { return b.team === 'police'; }).length; }
+    var firedEarly = 0, firedLate = false;
+    for (k = 0; k < 90; k++) {
+      FW.player.x = 200; FW.player.z = 200; FW.player.hp = FW.player.maxHp; FW.wanted = 2; FW.police = []; // isolate the foot cop (no car shooters)
+      cop.x = 216; cop.z = 200; cop.alive = true; cop.stun = 0;
+      fe.step(STEP, {});
+      if (k < 28) firedEarly += policeBullets(FW); // ~0.47s window — should stay 0 (telegraph)
+      if (policeBullets(FW) > 0) firedLate = true;
+    }
+    assert.strictEqual(firedEarly, 0, 'cop holds fire during the ~0.9s warmup (no shots in first 0.47s)');
+    assert.ok(firedLate, 'cop does open fire after the warmup');
+
+    // (c) while already wanted, a fresh witness does NOT instantly re-pin your location
+    //     (you get a beat to break line of sight).
+    var we = GTA3D.createEngine(), WW = we.world, WIN = we._internal;
+    for (var wp = 0; wp < WW.peds.length; wp++) WW.peds[wp].alive = false;
+    var wit = WW.peds[0]; wit.x = WW.player.x; wit.z = WW.player.z; wit.alive = true; wit.witness = false; wit.cop = false; wit.gang = undefined;
+    WW.wanted = 2; WW.seen = false; WW.searchTimer = 5; WW.lkpValid = true;
+    WIN.commitCrime(we.constants.CRIME.PETTY, WW.player.x, WW.player.z);
+    assert.strictEqual(WW.searchTimer, 5, 'a fresh witness while hot does not instantly re-pin the search (no instant lkp reset)');
+    assert.ok(wit.witness === true && wit.reportTimer > 0, 'witness will report after a delay, not instantly');
+  })();
+
+  // 9s) Money: bigger base fare + passive rent is actually paid out.
+  (function moneyChecks() {
+    var me = GTA3D.createEngine(), MW = me.world, MIN = me._internal;
+    MW.player.inCar = false; MW.player.x = MW.jobDepots[0].x; MW.player.z = MW.jobDepots[0].z; // stand on a depot
+    MIN.acceptJob();
+    assert.ok(MW.job && MW.job.base >= 75, 'courier base fare is at least $75 (was tiny) — got ' + (MW.job ? MW.job.base : 'none'));
+    // own a property → passive rent accrues and is paid
+    var me2 = GTA3D.createEngine(), M2 = me2.world;
+    M2.money = 0; M2.ownedProps = [2]; // Downtown Penthouse (income 15)
+    for (var k = 0; k < 180; k++) me2.step(STEP, {}); // ~3s
+    assert.ok(M2.money > 0, 'owned property pays passive rent over time — got $' + M2.money);
+    assert.ok(M2.money >= 0, 'money never goes negative');
   })();
 
   // 10) long soak with pseudo-random input (now also exercises economy inputs)
