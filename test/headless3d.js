@@ -847,6 +847,30 @@ function run() {
     assert.ok(RW.roadblockCd === 0, 'safehouse clears the roadblock cooldown');
   })();
 
+  // 9p5s) SURROUND-THE-EXIT — ducking into a building while wanted isn't a free escape: stepping
+  //       back out drops a cordon of cops around the doorway. No heat = no cordon.
+  (function surroundChecks() {
+    var se = GTA3D.createEngine(), SW = se.world, SIN = se._internal, i;
+    var gun = null; for (i = 0; i < SW.shops.length; i++) if (SW.shops[i].type === 'gun') gun = SW.shops[i];
+    SW.peds = SW.peds.filter(function (q) { return !q.cop; });   // clear ambient cops
+    SW.player.inCar = false; SW.player.x = gun.x; SW.player.z = gun.z; SW.wanted = 3;
+    SIN.enterShop(gun);
+    assert.ok(SW.interior && SW.peds.filter(function (q) { return q.cop && q.alive; }).length === 0, 'inside: sim paused, no cops yet');
+    SIN.exitShop();
+    var cordon = SW.peds.filter(function (q) { return q.cop && q.alive; });
+    var near = cordon.filter(function (c) { return Math.hypot(c.x - SW.player.x, c.z - SW.player.z) < 7; });
+    assert.ok(cordon.length >= 3 && near.length === cordon.length, 'exiting hot spawns a cordon ringing the exit (' + cordon.length + ')');
+    assert.ok(SW.seen === true && Math.abs(SW.lkpX - SW.player.x) < 1, 'cordon means the police know exactly where you are');
+    cordon.forEach(function (c) { assert.ok(!SIN.circleHitsSolid(c.x, c.z, 0.5), 'cordon cop not stuck in a wall'); });
+    // no heat -> no cordon (shopping in peace)
+    var pe = GTA3D.createEngine(), PW = pe.world, PIN = pe._internal;
+    var g2 = null; for (i = 0; i < PW.shops.length; i++) if (PW.shops[i].type === 'gun') g2 = PW.shops[i];
+    PW.peds = PW.peds.filter(function (q) { return !q.cop; });
+    PW.player.inCar = false; PW.player.x = g2.x; PW.player.z = g2.z; PW.wanted = 0;
+    PIN.enterShop(g2); PIN.exitShop();
+    assert.ok(PW.peds.filter(function (q) { return q.cop && q.alive; }).length === 0, 'no heat: no cordon, shop in peace');
+  })();
+
   // 9p7v) VEHICLES — pricier tiers are genuinely faster AND corner better (per-car engine/top/grip
   //       now drive the physics), and customization (sport tires) persists across save/load.
   (function vehicleChecks() {

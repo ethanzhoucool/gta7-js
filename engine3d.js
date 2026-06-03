@@ -805,6 +805,7 @@
       var wasHome = W.interior.type === 'apartment';
       W.interior = null; W.currentShop = null;
       post('@you', wasHome ? 'Left your apartment.' : 'Back on the street.');
+      surroundExit();   // still wanted? the cops have the doorway cordoned
     }
     // Walk into an OWNED apartment to go inside your home. Reuses the interior state machine
     // (exitShop/interiorStep are type-agnostic). The renderer draws an 'apartment' room. Entering
@@ -1697,7 +1698,7 @@
       var p = W.player, hx = p.vx, hz = p.vz, hl = Math.hypot(hx, hz);
       if (hl < 0.5) { hx = Math.sin(p.yaw); hz = Math.cos(p.yaw); hl = 1; }
       hx /= hl; hz /= hl;
-      var spot = roadNear(p.x + hx * 60, p.z + hz * 60, 25, 75) || roadNear(p.x, p.z, 40, 90);
+      var spot = roadNear(p.x + hx * 60, p.z + hz * 60, 25, 75) || roadNear(p.x, p.z, 30, 100) || roadNear(p.x, p.z, 8, 160);
       if (!spot) return false;
       var blockYaw = Math.atan2(p.x - spot.x, p.z - spot.z) + Math.PI / 2; // broadside to the approach
       for (var k = 0; k < 2; k++) {
@@ -1712,6 +1713,34 @@
       }
       W.roadblockCd = ROADBLOCK_CD;
       post('@LeonidaPD', 'Roadblock ahead! 🚧');
+      return true;
+    }
+    // Ducking into a building while wanted isn't a free escape: step back out and the police have
+    // the exit CORDONED. Drops a ring of cops around the doorway (topping up to the heat's quota),
+    // facing the player, aware of your position. Called on exit when still hot.
+    function surroundExit() {
+      if (W.wanted < 1) return false;
+      var p = W.player, swat = W.wanted >= 4;
+      var live = 0; for (var i = 0; i < W.peds.length; i++) { var q = W.peds[i]; if (q.cop && q.alive) live++; }
+      var want = Math.min(2 + W.wanted, 6);             // 3..6 cops in the cordon
+      var toSpawn = Math.max(0, want - live);
+      for (var k = 0; k < toSpawn; k++) {
+        var baseAng = (k / Math.max(1, toSpawn)) * TWO_PI + 0.4, cx = p.x, cz = p.z, placed = false;
+        // ring around the door points partly back into the building — rotate the angle (and pull in)
+        // to find a clear road spot; fall back to the doorway itself (the player stands on a road tile).
+        for (var a = 0; a < 6 && !placed; a++) {
+          var ang = baseAng + a * 1.05;
+          for (var R = 4.5; R >= 1.8 && !placed; R -= 0.9) {
+            var tx = p.x + Math.cos(ang) * R, tz = p.z + Math.sin(ang) * R;
+            if (!circleHitsSolid(tx, tz, PLAYER_RADIUS)) { cx = tx; cz = tz; placed = true; }
+          }
+        }
+        var cop = makeCopFoot(cx, cz, swat);
+        cop.yaw = Math.atan2(p.x - cx, p.z - cz); cop.dir = cop.yaw;
+        W.peds.push(cop);
+      }
+      W.lkpX = p.x; W.lkpZ = p.z; W.lkpValid = true; W.seen = true; W.searchTimer = 0;
+      if (toSpawn > 0) post('@LeonidaPD', "You're surrounded — police at the exit! 🚔");
       return true;
     }
 
@@ -1912,7 +1941,7 @@
         startHeist: startHeist, tickHeist: tickHeist, nearestBank: nearestBank, collectBusiness: collectBusiness,
         BUSINESS_DEFS: BUSINESS_DEFS, BANK_DEFS: BANK_DEFS,
         serializeSave: serializeSave, applySave: applySave, startTutorial: startTutorial,
-        makePolice: makePolice, applyPoliceTier: applyPoliceTier, deployOfficer: deployOfficer, spawnRoadblock: spawnRoadblock, POLICE_TIERS: POLICE_TIERS, policeTier: policeTier }
+        makePolice: makePolice, applyPoliceTier: applyPoliceTier, deployOfficer: deployOfficer, spawnRoadblock: spawnRoadblock, POLICE_TIERS: POLICE_TIERS, policeTier: policeTier, surroundExit: surroundExit }
     };
   }
 
