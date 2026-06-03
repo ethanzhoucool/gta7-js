@@ -22,6 +22,7 @@ var PAGE = 'file://' + path.resolve(__dirname, '..', 'game3d.html');
   page.on('console', function (m) { if (m.type() === 'error') out.errs.push('console: ' + m.text()); });
   await page.goto(PAGE, { waitUntil: 'load', timeout: 30000 });
   await new Promise(function (r) { setTimeout(r, 700); });
+  await page.evaluate(function () { if (window.__startGame) window.__startGame(); }); // dismiss the start menu
 
   // helper: deterministically aim + converge the camera + solve (no rAF-timing race)
   async function aimSolve(yaw, pitch) {

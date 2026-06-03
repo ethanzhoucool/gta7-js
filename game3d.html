@@ -25,9 +25,26 @@
       border-radius: 50%; background: rgba(255,255,255,.9); box-shadow: 0 0 0 2px rgba(0,0,0,.55); display: none; }
     #reticle.aim { width: 4px; height: 4px; margin: -2px 0 0 -2px; background: #ff5a5a;
       box-shadow: 0 0 0 2px rgba(0,0,0,.7), 0 0 10px 2px rgba(255,90,90,.5); }
-    #hint { position: fixed; left: 50%; top: 30%; transform: translate(-50%,-50%); text-align: center; }
-    #hint h1 { font-size: 46px; margin: 0; color: #ffd23f; text-shadow: 0 3px 12px #000; }
-    #hint p { font-size: 16px; color: #d8cffe; }
+    #tut { position: fixed; left: 50%; top: 96px; transform: translateX(-50%); max-width: 80%; text-align: center;
+      font: bold 16px Arial; color: #fff; background: rgba(28,24,51,.82); border: 1px solid #6f5bd8;
+      padding: 8px 16px; border-radius: 10px; display: none; box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+    /* start menu */
+    #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(120% 90% at 50% 20%, rgba(40,33,79,.78), rgba(8,7,18,.93)); z-index: 50; }
+    #menu .mcard { text-align: center; padding: 38px 46px; }
+    #menu h1 { font: 900 64px Arial; margin: 0; letter-spacing: 2px; color: #ffd23f; text-shadow: 0 4px 0 #b8851a, 0 8px 26px rgba(0,0,0,.6); }
+    #menu .msub { font: 600 18px Arial; color: #d8cffe; letter-spacing: 6px; margin: 2px 0 26px; }
+    #menu button { display: block; width: 280px; margin: 10px auto; padding: 13px 0; cursor: pointer;
+      font: bold 18px Arial; color: #1c1833; background: #d8cffe; border: 0; border-radius: 11px;
+      box-shadow: 0 4px 0 #8f7fd6; transition: transform .06s, background .12s; }
+    #menu button:hover { background: #fff; transform: translateY(-1px); }
+    #menu button:active { transform: translateY(2px); box-shadow: 0 2px 0 #8f7fd6; }
+    #menu button:disabled { opacity: .4; cursor: default; box-shadow: 0 4px 0 #5a5470; }
+    #menu button.primary { background: #ffd23f; box-shadow: 0 4px 0 #b8851a; }
+    #menu button.primary:hover { background: #ffe07a; }
+    #menu .mctrl { margin-top: 18px; font: 13px/1.7 monospace; color: #b9b2d6; text-align: left;
+      display: inline-block; background: rgba(0,0,0,.3); padding: 12px 18px; border-radius: 8px; }
+    #menu .mfoot { margin-top: 20px; font: 12px Arial; color: #8a86a0; }
     #banner { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); font: bold 18px Arial; color: #ffd23f; text-shadow: 0 2px 6px #000; }
     #wasted { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: rgba(60,0,0,.45); font: bold 72px Arial; color: #e74c3c; }
@@ -114,8 +131,16 @@
     <div id="tJob"   class="tbtn sm" data-act="job">JOB</div>
     <div id="tWep"   class="tbtn sm" data-act="wep">WEAPON</div>
   </div>
-  <div id="hint"><h1>GTA 7: JS — Leonida 3D</h1>
-    <p>Click to start. Carjack a ride, dodge the cops, run the streets.</p></div>
+  <div id="tut"></div>
+  <div id="menu"><div class="mcard">
+    <h1>GTA 7: JS</h1>
+    <div class="msub">LEONIDA 3D</div>
+    <button id="mNew" class="primary">New Game</button>
+    <button id="mCont">Continue</button>
+    <button id="mCtrl">Controls</button>
+    <div id="mControls" class="mctrl" style="display:none">WASD move · Shift sprint · Space jump<br>F enter/exit · E rob (bank/store) · B shop · H safehouse<br>J courier job · 1–4 / Q weapon · click to aim/shoot</div>
+    <div class="mfoot">Original GTA-style sandbox · San Francisco · built in pure JS + Three.js</div>
+  </div></div>
   <div id="wasted">WASTED</div>
   <div id="err"><div><h1 style="color:#e74c3c">Couldn't load Three.js</h1>
     <p>This 3D build streams the Three.js library from a CDN, so it needs an internet connection on first load.<br>
@@ -683,9 +708,9 @@
         );
         var pedBaseY = porticoTopY + entH + friezeH - 0.1;
         pediment.position.set(0, pedBaseY + pedH / 2, colZ - 0.05);
-        // Rotate 90° around X to lay the cone "on its side" so it becomes a gable
-        // shape facing the road — then spin around Y so the flat edge faces +z.
-        pediment.rotation.set(0, Math.PI / 6, 0);
+        // Lay the 3-sided cone on its side (90° about X) so its triangular face reads as a
+        // classical gable pediment facing the road, then spin so a flat edge fronts +z.
+        pediment.rotation.set(Math.PI / 2, Math.PI / 6, 0);
         pediment.castShadow = true;
         g.add(pediment);
 
@@ -2108,8 +2133,32 @@
       return { yaw: solvedAimYaw, pitch: solvedAimPitch };
     };
 
-    var hintEl = document.getElementById('hint');
-    function started() { return locked || W.time > 0.5; }
+    /* ----------------------- Start menu + save/load ----------------------- */
+    var SAVE_KEY = 'gta7js.save.v1';
+    var gameStarted = false, saveClock = 0;
+    function hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; } }
+    function loadSaveObj() { try { return JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return null; } }
+    function saveGame() { if (!gameStarted) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify(IN.serializeSave())); } catch (e) {} }
+    function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} }
+    var menuEl = document.getElementById('menu'), tutEl = document.getElementById('tut');
+    function started() { return gameStarted; }
+    function startGame(load) {
+      if (load) { var s = loadSaveObj(); if (s) IN.applySave(s); }
+      else { clearSave(); if (IN.startTutorial) IN.startTutorial(); }
+      gameStarted = true;
+      if (menuEl) menuEl.style.display = 'none';
+      saveClock = 0;
+    }
+    window.__startGame = function (load) { startGame(!!load); };   // test/automation hook
+    (function wireMenu() {
+      var bNew = document.getElementById('mNew'), bCont = document.getElementById('mCont'),
+          bCtrl = document.getElementById('mCtrl'), ctrls = document.getElementById('mControls');
+      if (bCont) { bCont.disabled = !hasSave(); if (hasSave()) bCont.classList.add('primary'); }
+      if (bNew) bNew.addEventListener('click', function () { startGame(false); });
+      if (bCont) bCont.addEventListener('click', function () { if (hasSave()) startGame(true); });
+      if (bCtrl) bCtrl.addEventListener('click', function () { ctrls.style.display = ctrls.style.display === 'none' ? 'block' : 'none'; });
+    })();
+    window.addEventListener('beforeunload', saveGame);   // best-effort save on close
 
     /* ----------------------------- Camera --------------------------------- */
     var camTarget = new THREE.Vector3();
@@ -2450,7 +2499,7 @@
         }
         if (IN.nearestProperty(6) >= 0) pr = (pr ? pr + '   ' : '') + '[H] Lie low (safehouse)';
         if (!W.job && IN.nearestDepot(6.5)) pr = (pr ? pr + '   ' : '') + '[J] Courier job';
-        if (!W.heist && IN.nearestBank && IN.nearestBank(7)) pr = '[R] Rob the bank 🏦';   // big-score prompt
+        if (!W.heist && IN.nearestBank && IN.nearestBank(7)) pr = '[E] Rob the bank 🏦';   // big-score prompt (E = rob)
       } else { pr = '[F] Exit vehicle'; if (!W.job && IN.nearestDepot(6.5)) pr += '   [J] Courier job'; }
       elPrompt.textContent = pr; elPrompt.style.display = pr ? 'block' : 'none';
 
@@ -2611,8 +2660,12 @@
       acc += dt;
       if (!W.player.inCar) solveAim();   // refresh the camera-accurate firing yaw + pitch once per frame
       var first = true, guard = 0;
-      while (acc >= STEP && guard < 6) { eng.step(STEP, buildInput(first)); acc -= STEP; first = false; guard++; }
+      // the world is frozen behind the start menu — only step once the player picks New Game / Continue
+      if (gameStarted) { while (acc >= STEP && guard < 6) { eng.step(STEP, buildInput(first)); acc -= STEP; first = false; guard++; } }
+      else acc = 0;
       if (acc > STEP) acc = 0;
+      // periodic autosave (every ~15s of play)
+      if (gameStarted) { saveClock += dt; if (saveClock >= 15) { saveClock = 0; saveGame(); } }
       justF = false; justE = false; justSpace = false; justB = false; justN = false; justH = false;
       justJ = false; justQ = false; weaponSlot = -1; // edges consumed for this frame
 
@@ -2630,7 +2683,10 @@
       if (W.heist && W.heist.stage === 'escape') { heistMarker.visible = true; heistMarker.position.set(W.heist.dropX, 0, W.heist.dropZ); heistMarker.children[1].position.y = 16.8 + Math.sin(W.time * 3) * 0.5; }
       else if (heistMarker.visible) heistMarker.visible = false;
       updateHUD();
-      if (started()) hintEl.style.display = 'none';
+      if (gameStarted && menuEl && menuEl.style.display !== 'none') menuEl.style.display = 'none';
+      // tutorial banner (engine-driven step text)
+      if (gameStarted && W.tutorial && W.tutorial.text) { tutEl.textContent = W.tutorial.text; tutEl.style.display = 'block'; }
+      else if (tutEl.style.display !== 'none') tutEl.style.display = 'none';
       renderer.render(scene, camera);
     }
     requestAnimationFrame(frame);

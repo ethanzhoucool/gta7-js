@@ -24,6 +24,7 @@ var PAGE = 'file://' + path.resolve(__dirname, '..', 'game3d.html');
   page.on('pageerror', function (e) { out.errs.push('page: ' + String(e.message || e)); });
   await page.goto(PAGE, { waitUntil: 'load', timeout: 30000 });
   await new Promise(function (r) { setTimeout(r, 800); });
+  await page.evaluate(function () { if (window.__startGame) window.__startGame(); }); // dismiss the start menu
 
   // 1) touch HUD is shown and pointer-lock was bypassed (locked forced true)
   out.steps.touchHudVisible = await page.evaluate(function () {

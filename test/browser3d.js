@@ -51,24 +51,25 @@ var SHOT = path.resolve(__dirname, '..', 'boot3d.png');
     out.steps.engineLoaded = globals.engine;
     out.steps.errOverlayHidden = (globals.err !== 'flex');
 
-    // let the render loop run real time
+    // dismiss the start menu (New Game), then let the render loop run real time
+    await page.evaluate(function () { if (window.__startGame) window.__startGame(); });
     await new Promise(function (r) { setTimeout(r, 2500); });
 
-    // proof the loop ran & stepped the sim: hint overlay hides once started() (W.time>0.5)
+    // proof the loop ran & stepped the sim: the menu hides on start AND world.time advanced
     var run = await page.evaluate(function () {
-      var hint = document.getElementById('hint');
+      var menu = document.getElementById('menu');
       var cv = document.getElementById('c');
       var gl = cv && (cv.getContext('webgl2') || cv.getContext('webgl'));
-      // is the canvas actually sized & contexted?
       return {
-        hintHidden: hint ? getComputedStyle(hint).display === 'none' : false,
+        menuHidden: menu ? getComputedStyle(menu).display === 'none' : true,
+        worldTime: (window.__ENG && window.__ENG.world) ? window.__ENG.world.time : 0,
         canvasW: cv ? cv.width : 0,
         canvasH: cv ? cv.height : 0,
         hasGL: !!gl,
         glLost: gl ? gl.isContextLost() : true
       };
     });
-    out.steps.renderLoopRan = run.hintHidden;     // only true if frame()->started() fired
+    out.steps.renderLoopRan = run.menuHidden && run.worldTime > 0.5;  // menu dismissed + sim advanced
     out.steps.canvasSized = run.canvasW > 0 && run.canvasH > 0;
     out.steps.webglLive = run.hasGL && !run.glLost;
 

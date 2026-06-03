@@ -774,6 +774,36 @@ function run() {
     assert.ok(IN.collectBusiness() === false, 'cannot collect when away from the business');
   })();
 
+  // 9sh) GAME SHELL — save/load round-trips progression; the tutorial advances off live play.
+  (function shellChecks() {
+    var se = GTA3D.createEngine(), SW = se.world, SIN = se._internal;
+    // build an empire, then serialize
+    SW.player.inCar = false; SW.money = 99999;
+    SIN.buyItem('realty', 0); SIN.buyItem('biz', 0); SW.bizVault[0] = 640;
+    SW.heistsDone = 4; SW.kills = 9; SW.jobsDone = 3;
+    SIN.giveWeapon('rifle'); SW.player.maxHp = 175; SW.player.gunDmgMul = 2;
+    var snap = JSON.parse(JSON.stringify(SIN.serializeSave()));
+    var moneyAtSave = SW.money;
+    // a fresh save (no localStorage in node — just the object) restores onto a new world
+    var le = GTA3D.createEngine(), LW = le.world, LIN = le._internal;
+    assert.ok(LIN.applySave(snap) === true, 'applySave succeeds');
+    assert.strictEqual(LW.money, moneyAtSave, 'money restored');
+    assert.ok(LW.ownedProps.indexOf(0) >= 0 && LW.ownedBiz.indexOf(0) >= 0, 'properties + businesses restored');
+    assert.strictEqual(LW.bizVault[0], 640, 'business vault restored');
+    assert.ok(LW.heistsDone === 4 && LW.kills === 9 && LW.jobsDone === 3, 'counters restored');
+    assert.ok(LW.player.weapons.rifle === true && LW.player.maxHp === 175 && LW.player.gunDmgMul === 2, 'weapons + stats restored');
+    assert.ok(LW.player.hp === LW.player.maxHp, 'loaded player is at full (restored) hp');
+    assert.ok(LW.netWorth >= LW.money, 'net worth recomputed after load');
+    assert.ok(LIN.applySave(null) === false, 'applySave(null) is a safe no-op');
+    // tutorial advances: step 0 (move) clears once you travel
+    var te = GTA3D.createEngine(), TW = te.world, TIN = te._internal;
+    TIN.startTutorial();
+    assert.ok(TW.tutorial && TW.tutorial.i === 0, 'tutorial starts at step 0');
+    var sx = TW.player.x; TW.player.x = sx + 40;   // "move"
+    te.step(STEP, {});
+    assert.ok(!TW.tutorial || TW.tutorial.i >= 1, 'tutorial advances past the move step after travelling');
+  })();
+
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the
   //     car recovers afterwards (doesn't spin out forever or go non-finite).
   (function driftCheck() {

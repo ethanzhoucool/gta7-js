@@ -613,7 +613,7 @@
     function heistReward() { return clamp(8000 + W.heistsDone * 4000 + randInt(0, 4000), 8000, 30000); }
     function startHeist() { // returns true if it consumed the rob press (started/already cracking a bank)
       if (W.player.inCar) return false;
-      if (W.heist) return W.heist.stage === 'rob';   // mid-crack: swallow the press, tickHeist drives it
+      if (W.heist) return true;   // any active heist swallows the rob press (don't trigger store-rob mid-escape)
       var b = nearestBank(HEIST_BANK_R); if (!b) return false;
       W.heist = { stage: 'rob', bankId: b.id, crack: 0, reward: heistReward() };
       post('@you', '🏦 Cracking ' + b.name + ' — stay on the vault!');
@@ -658,6 +658,69 @@
       for (var i = 0; i < W.goals.length; i++) { var g = W.goals[i];
         if (!g.done && g.test()) { g.done = true; W.money += g.reward; W.trauma = Math.min(1, (W.trauma || 0) + 0.25); post('🏆 GOAL', g.label + ' — +$' + g.reward); }
       }
+    }
+
+    /* ============================ TUTORIAL ============================ */
+    // A short, skippable guided intro for New Game. Each step's condition is read straight off W,
+    // so it advances naturally as the player does the thing. W.tutorial.text is what the HUD shows.
+    var TUT = [
+      { text: '🎮 Move with W A S D (or the arrow keys)', ok: function (t) { return dist(W.player.x, W.player.z, t.startX, t.startZ) > 12; } },
+      { text: '🚗 Walk up to a car and press F to get in — then drive', ok: function (t) { return t.everDrove; } },
+      { text: '🚪 On foot, press B at a shop to open it, or F to step inside', ok: function () { return !!W.currentShop || !!W.interior; } },
+      { text: '💵 Make money: press J for a courier job, or R to rob a store', ok: function () { return W.money > 0 || !!W.job || W.jobsDone > 0; } },
+      { text: '🏦 Big score: press R at a bank to crack the vault. You’re ready!', ok: function () { return !!W.heist || W.heistsDone > 0; } }
+    ];
+    function startTutorial() { W.tutorial = { i: 0, startX: W.player.x, startZ: W.player.z, everDrove: false, text: TUT[0].text }; post('@tip', TUT[0].text); }
+    function tickTutorial() {
+      var t = W.tutorial; if (!t) return;
+      if (W.player.inCar) t.everDrove = true;
+      var step = TUT[t.i]; if (!step) { W.tutorial = null; return; }
+      if (step.ok(t)) {
+        t.i++;
+        if (t.i >= TUT.length) { W.tutorial = null; post('@you', 'Tutorial complete — the city is yours. 🌴'); }
+        else { t.text = TUT[t.i].text; post('@tip', t.text); }
+      }
+    }
+
+    /* ===================== SAVE / LOAD (progression) ===================== */
+    // Serialize only PROGRESSION (not the transient world). applySave runs right after reset()+
+    // spawnPlayer so catalogs/goals exist; the world is freshly generated, the player's empire restored.
+    function serializeSave() {
+      var p = W.player, m = {}, k;
+      for (k in W.milestones) if (W.milestones.hasOwnProperty(k)) m[k] = W.milestones[k];
+      var wp = {}; for (k in p.weapons) if (p.weapons.hasOwnProperty(k)) wp[k] = p.weapons[k];
+      return {
+        v: 1, money: W.money, kills: W.kills, jobsDone: W.jobsDone, rampagesDone: W.rampagesDone, heistsDone: W.heistsDone,
+        ownedCarTier: W.ownedCarTier, ownedProps: W.ownedProps.slice(), homePropIndex: W.homePropIndex,
+        ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
+        zonesOwned: W.zones.map(function (z) { return !!z.owned; }),
+        milestones: m, goalsDone: W.goals.map(function (g) { return !!g.done; }),
+        player: { maxHp: p.maxHp, armor: p.armor, gunDmgMul: p.gunDmgMul, fireRateMul: p.fireRateMul, weapon: p.weapon, weapons: wp }
+      };
+    }
+    function applySave(s) {
+      if (!s || typeof s !== 'object') return false;
+      W.money = s.money | 0; W.kills = s.kills | 0; W.jobsDone = s.jobsDone | 0; W.rampagesDone = s.rampagesDone | 0; W.heistsDone = s.heistsDone | 0;
+      W.ownedCarTier = s.ownedCarTier | 0; W.ownedProps = (s.ownedProps || []).slice(); W.homePropIndex = (s.homePropIndex == null ? null : (s.homePropIndex | 0));
+      W.ownedBiz = (s.ownedBiz || []).slice(); W.bizVault = (s.bizVault || []).slice();
+      if (s.zonesOwned) for (var zi = 0; zi < W.zones.length; zi++) { if (s.zonesOwned[zi]) { W.zones[zi].owned = true; } }
+      W.ownedZones = W.zones.filter(function (z) { return z.owned; }).length;
+      if (s.milestones) { W.milestones = {}; for (var mk in s.milestones) if (s.milestones.hasOwnProperty(mk)) W.milestones[mk] = s.milestones[mk]; }
+      if (s.goalsDone) for (var gi = 0; gi < W.goals.length; gi++) if (s.goalsDone[gi]) W.goals[gi].done = true;
+      if (s.player) { var p = W.player, sp = s.player;
+        if (sp.maxHp) { p.maxHp = sp.maxHp; p.hp = sp.maxHp; }
+        p.armor = sp.armor || 0; p.gunDmgMul = sp.gunDmgMul || 1; p.fireRateMul = sp.fireRateMul || 1;
+        if (sp.weapons) for (var wk in sp.weapons) if (sp.weapons.hasOwnProperty(wk)) p.weapons[wk] = sp.weapons[wk];
+        if (sp.weapon && p.weapons[sp.weapon]) p.weapon = sp.weapon;
+      }
+      W.ownedCarTier = Math.max(0, Math.min(CAR_TIERS.length - 1, W.ownedCarTier));
+      // respawn the courtesy car at the restored tier, and stand at home if one is owned
+      if (W.playerCar) applyCarTier(W.playerCar, W.ownedCarTier);
+      var hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : -1;
+      if (hi >= 0 && W.propPos && W.propPos[hi]) { W.player.x = W.propPos[hi].x; W.player.z = W.propPos[hi].z; }
+      recomputeNetWorth();
+      post('@you', 'Save loaded — welcome back. Net worth $' + W.netWorth.toLocaleString('en-US'));
+      return true;
     }
     // Permanent milestone unlocks (researched: cap each loop with a felt, one-time upgrade).
     function unlock(key, msg, apply) { if (W.milestones[key]) return; W.milestones[key] = true; apply(); W.trauma = Math.min(1, (W.trauma || 0) + 0.3); post('⭐ UNLOCK', msg); }
@@ -1670,7 +1733,7 @@
 
       if (W.state === 'wasted') {
         W.respawnTimer -= dt; ageFeed(dt);
-        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; if (_hl) post('@you', 'Busted — lost the score.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
+        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
         return;
       }
       if (W.player.hp <= 0) { wasted(); return; }
@@ -1698,6 +1761,7 @@
       tickRampage(dt);
       tickZones(dt);
       tickHeist(dt);
+      tickTutorial();
       // auto-collect a business vault when you're standing at one (throttled so it pays a lump, not per-frame)
       W.bizClock = (W.bizClock || 0) + dt;
       if (W.bizClock >= 1) { W.bizClock = 0; if (!W.player.inCar) collectBusiness(); }
@@ -1755,7 +1819,8 @@
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,
         WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed,
         startHeist: startHeist, tickHeist: tickHeist, nearestBank: nearestBank, collectBusiness: collectBusiness,
-        BUSINESS_DEFS: BUSINESS_DEFS, BANK_DEFS: BANK_DEFS }
+        BUSINESS_DEFS: BUSINESS_DEFS, BANK_DEFS: BANK_DEFS,
+        serializeSave: serializeSave, applySave: applySave, startTutorial: startTutorial }
     };
   }
 

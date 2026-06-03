@@ -21,6 +21,7 @@ var DIR = path.resolve(__dirname, '..');
   page.on('console', function (m) { if (m.type() === 'error') errs.push('console: ' + m.text()); });
   await page.goto(PAGE, { waitUntil: 'load', timeout: 30000 });
   await new Promise(function (r) { setTimeout(r, 700); });
+  await page.evaluate(function () { if (window.__startGame) window.__startGame(); }); // dismiss the start menu
 
   async function shot(name, setup) {
     var info = await page.evaluate(function (setup) {
