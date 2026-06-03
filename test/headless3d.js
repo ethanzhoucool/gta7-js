@@ -350,7 +350,9 @@ function run() {
     // tickZones doesn't re-aggro and re-raise wanted the instant it's cleared
     CW2.player.x = ce.constants.WORLD / 2; CW2.player.z = ce.constants.WORLD / 2;
     CW2.wanted = 1; CW2.seen = false; CW2.searchTimer = 100; CW2.lkpValid = true; CW2.lkpX = CW2.player.x; CW2.lkpZ = CW2.player.z;
-    CW2.peds.push({ kind: 'ped', x: CW2.player.x + 5, z: CW2.player.z, yaw: 0, dir: 0, speed: 0, think: 1, hp: 50, alive: true,
+    // cop is OUT of sight (>POLICE_SIGHT=70): a cop with line-of-sight now holds the heat, so the
+    // search only gives up once no officer can see you — then the (far) foot cop is purged at 0★.
+    CW2.peds.push({ kind: 'ped', x: CW2.player.x + 120, z: CW2.player.z, yaw: 0, dir: 0, speed: 0, think: 1, hp: 50, alive: true,
       tough: false, hostile: false, panic: 0, stun: 0, launchVx: 0, launchVz: 0, witness: false, reportTimer: 0, reportLevel: 0,
       cop: true, fireCd: 99, strafeSign: 1, strafeFlip: 99, color: 0x1b2a4a, id: 9 });
     ce.step(STEP, {}); // searchTimer huge -> wanted hits 0 -> clearFootCops
@@ -862,6 +864,11 @@ function run() {
     assert.ok(cordon.length >= 3 && near.length === cordon.length, 'exiting hot spawns a cordon ringing the exit (' + cordon.length + ')');
     assert.ok(SW.seen === true && Math.abs(SW.lkpX - SW.player.x) < 1, 'cordon means the police know exactly where you are');
     cordon.forEach(function (c) { assert.ok(!SIN.circleHitsSolid(c.x, c.z, 0.5), 'cordon cop not stuck in a wall'); });
+    // the cordon HOLDS the heat: foot cops with line-of-sight keep you "seen", so the wanted level
+    // doesn't bleed away on the search timer while you're surrounded (no free escape through a door).
+    SW.player.maxHp = 9000; SW.player.hp = 9000; var wantHeld = SW.wanted;
+    for (var ks = 0; ks < 200; ks++) se.step(STEP, {});
+    assert.ok(SW.wanted >= wantHeld && SW.seen === true, 'surrounded: foot-cop line-of-sight holds the wanted level (no decay)');
     // no heat -> no cordon (shopping in peace)
     var pe = GTA3D.createEngine(), PW = pe.world, PIN = pe._internal;
     var g2 = null; for (i = 0; i < PW.shops.length; i++) if (PW.shops[i].type === 'gun') g2 = PW.shops[i];

@@ -1493,7 +1493,7 @@
       }
       var c = nearestCar(4.5);
       var pc = nearestPoliceCar(4.5);
-      var shop = nearestShop(5.2);       // matches the on-screen prompt range so F always enters when prompted
+      var shop = nearestShop(5.5);       // matches the on-screen prompt range (5.5) so F always enters when prompted
       var homeI = nearestProperty(4.0);  // index of an OWNED apartment at the door, or -1
       // pick the closest interactable: enter home, walk into a shop, steal a cruiser, or grab a car
       var carD = c ? d2(c.x, c.z, p.x, p.z) : 1e9;
@@ -1665,6 +1665,10 @@
         if (W.wanted === 0 && dl > 160) { W.police.splice(i, 1); continue; }
         updatePoliceCar(c, dt);
       }
+      // foot cops (incl. the exit cordon) also keep you "seen" — any officer with line of sight holds
+      // the heat, so ducking into a building can't bleed the wanted level while you're surrounded.
+      if (!W.seen) { for (var fi = 0; fi < W.peds.length; fi++) { var fp = W.peds[fi];
+        if (fp.cop && fp.alive && dist(fp.x, fp.z, W.player.x, W.player.z) < POLICE_SIGHT && lineOfSight(fp.x, fp.z, W.player.x, W.player.z)) { W.seen = true; break; } } }
       if (W.seen) { W.lkpX = W.player.x; W.lkpZ = W.player.z; W.lkpValid = true; W.searchTimer = 0; }
       else if (W.wanted > 0) {
         W.searchTimer += dt;

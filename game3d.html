@@ -2886,17 +2886,23 @@
       // contextual prompt (vehicle / shop / store / safehouse / job depot)
       var pr = '';
       if (!W.player.inCar) {
-        var nc = IN.nearestCar(4.5); if (nc) pr = nc.npc ? '[F] Carjack' : '[F] Enter vehicle';
-        var ns = IN.nearestShop(5.5); if (ns && !W.currentShop) pr = '[F] Enter · [B] ' + ns.name;
-        // F enters whichever interactable is CLOSEST (mirror tryEnterExit) so the prompt never lies:
-        // only show "[F] Enter home" when the home door beats a nearby car.
+        // The [F] label must match what tryEnterExit actually does: F enters the CLOSEST of
+        // {car, shop, owned-home} (radii mirror the engine: car 4.5, shop 5.5, home 4.0).
+        var _px = W.player.x, _pz = W.player.z;
+        var nc = IN.nearestCar(4.5);
+        var ns = (!W.currentShop) ? IN.nearestShop(5.5) : null;
         var homeI = IN.nearestProperty(4.0);
-        if (homeI >= 0) {
-          var _px = W.player.x, _pz = W.player.z, _pp = W.propPos[homeI];
-          var _hd = (_pp.x - _px) * (_pp.x - _px) + (_pp.z - _pz) * (_pp.z - _pz);
-          var _cd = nc ? (nc.x - _px) * (nc.x - _px) + (nc.z - _pz) * (nc.z - _pz) : 1e9;
-          if (_hd <= _cd) pr = '[F] Enter home';
+        var _cd = nc ? (nc.x - _px) * (nc.x - _px) + (nc.z - _pz) * (nc.z - _pz) : 1e9;
+        var _sd = ns ? (ns.x - _px) * (ns.x - _px) + (ns.z - _pz) * (ns.z - _pz) : 1e9;
+        var _hp = (homeI >= 0) ? W.propPos[homeI] : null;
+        var _hd = _hp ? (_hp.x - _px) * (_hp.x - _px) + (_hp.z - _pz) * (_hp.z - _pz) : 1e9;
+        var _fmin = Math.min(_cd, _sd, _hd);
+        if (_fmin < 1e9) {
+          if (_hd === _fmin) pr = '[F] Enter home';
+          else if (_sd === _fmin) pr = '[F] Enter · [B] ' + ns.name;          // shop closest: F enters, B shops
+          else pr = nc.npc ? '[F] Carjack' : '[F] Enter vehicle';
         }
+        if (ns && _sd !== _fmin) pr = (pr ? pr + '   ' : '') + '[B] ' + ns.name; // shop in range but not the F-target → still offer its menu
         if (IN.nearestProperty(6) >= 0) pr = (pr ? pr + '   ' : '') + '[H] Lie low (safehouse)';
         if (!W.job && IN.nearestDepot(6.5)) pr = (pr ? pr + '   ' : '') + '[J] Courier job';
         if (!W.heist && IN.nearestBank && IN.nearestBank(7)) pr = '[E] Rob the bank 🏦';   // big-score prompt (E = rob)
