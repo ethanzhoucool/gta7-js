@@ -1237,8 +1237,386 @@
 
       return groups;
     }
+    function buildMoreLandmarks() {
+      var groups = [];
+
+      // ── 1. PAINTED LADIES — colourful Victorian row-houses at tile (18,56) ──
+      // Five narrow gabled houses side-by-side running along +x, on Alamo Square-style
+      // flat ground. Each has a pastel body, a front bay window bump, and a peaked gable roof.
+      (function () {
+        var tx = 18, tz = 56;
+        var wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+
+        // Five distinct pastel body colours cycling through classic Victorian palette
+        var bodyColors  = [0xF4A7B9, 0xF9D48B, 0xA8D5A2, 0x9EC4E8, 0xD4A8DC];
+        var trimColors  = [0xC47090, 0xC8A040, 0x5A9A55, 0x4A80B0, 0x8A5A9A];
+        var roofColor   = 0x7A5C4A;  // warm dark wood tone for all roofs
+
+        var MAT_ROOF   = new THREE.MeshStandardMaterial({ color: roofColor,  roughness: 0.88, metalness: 0.0 });
+        var MAT_BASE   = new THREE.MeshStandardMaterial({ color: 0xD8C8A0,   roughness: 0.82, metalness: 0.0 });  // shared stoop stone
+
+        // Each house occupies ~2.4 u wide; 5 houses span ~12 u total along X
+        var houseW = 2.4, houseD = 3.6, houseH = 7.0;
+        var totalW = 5 * houseW + 4 * 0.15;  // slight gap between houses
+        var startX = -totalW / 2 + houseW / 2;
+
+        for (var hi = 0; hi < 5; hi++) {
+          var hx = startX + hi * (houseW + 0.15);
+
+          var MAT_BODY = new THREE.MeshStandardMaterial({ color: bodyColors[hi], roughness: 0.80, metalness: 0.0 });
+          var MAT_TRIM = new THREE.MeshStandardMaterial({ color: trimColors[hi], roughness: 0.55, metalness: 0.05 });
+
+          // Main body block
+          var body = new THREE.Mesh(new THREE.BoxGeometry(houseW, houseH, houseD), MAT_BODY);
+          body.position.set(hx, houseH / 2, 0);
+          body.castShadow = true; body.receiveShadow = true;
+          g.add(body);
+
+          // Bay window: shallow box bump on the front face
+          var bayW = houseW * 0.55, bayH = houseH * 0.52, bayD = 0.55;
+          var bay = new THREE.Mesh(new THREE.BoxGeometry(bayW, bayH, bayD), MAT_BODY);
+          bay.position.set(hx, houseH * 0.36, houseD / 2 + bayD / 2);
+          bay.castShadow = true;
+          g.add(bay);
+
+          // Bay window glass tint (flat plane inside the bump, slightly darker)
+          var glassMat = new THREE.MeshStandardMaterial({ color: 0x6A9FBE, roughness: 0.10, metalness: 0.45 });
+          var glass = new THREE.Mesh(new THREE.BoxGeometry(bayW - 0.12, bayH - 0.18, 0.05), glassMat);
+          glass.position.set(hx, houseH * 0.36, houseD / 2 + bayD + 0.01);
+          g.add(glass);
+
+          // Trim strip around bay top and sides (contrasting colour band)
+          var trimH = 0.22;
+          var bayTrimTop = new THREE.Mesh(new THREE.BoxGeometry(bayW + 0.18, trimH, bayD + 0.12), MAT_TRIM);
+          bayTrimTop.position.set(hx, houseH * 0.36 + bayH / 2 + trimH / 2, houseD / 2 + bayD / 2);
+          g.add(bayTrimTop);
+
+          // Cornice trim band at roofline
+          var cornice = new THREE.Mesh(new THREE.BoxGeometry(houseW + 0.12, 0.28, houseD + 0.12), MAT_TRIM);
+          cornice.position.set(hx, houseH + 0.14, 0);
+          g.add(cornice);
+
+          // Gable peaked roof — a 4-sided low cone approximating a gabled roof
+          // Use CylinderGeometry with 4 sides (box-pyramid), rotate 45° so ridge runs along X
+          var roofH = 2.4;
+          var roof = new THREE.Mesh(new THREE.CylinderGeometry(0.01, Math.sqrt(houseW * houseW + houseD * houseD) / 2 * 0.72, roofH, 4), MAT_ROOF);
+          roof.position.set(hx, houseH + roofH / 2, 0);
+          roof.rotation.y = Math.PI / 4;
+          roof.castShadow = true;
+          g.add(roof);
+
+          // Small rectangular front door
+          var MAT_DOOR = new THREE.MeshStandardMaterial({ color: 0x3A2210, roughness: 0.80, metalness: 0.0 });
+          var door = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.5, 0.09), MAT_DOOR);
+          door.position.set(hx, 0.75, houseD / 2 + 0.04);
+          g.add(door);
+
+          // Stone stoop step in front of door
+          var stoop = new THREE.Mesh(new THREE.BoxGeometry(houseW * 0.7, 0.32, 0.7), MAT_BASE);
+          stoop.position.set(hx, 0.16, houseD / 2 + 0.35);
+          stoop.receiveShadow = true;
+          g.add(stoop);
+        }
+
+        // Shared grass/park plinth the whole row sits on
+        var MAT_GRASS = new THREE.MeshStandardMaterial({ color: 0x6B9E4A, roughness: 0.95, metalness: 0.0 });
+        var plinth = new THREE.Mesh(new THREE.BoxGeometry(totalW + 2.0, 0.45, houseD + 3.0), MAT_GRASS);
+        plinth.position.set(0, -0.22, 0.3);
+        plinth.receiveShadow = true;
+        g.add(plinth);
+
+        g.position.set(wx, 0, wz);
+        scene.add(g);
+        groups.push(g);
+      })();
+
+      // ── 2. PALACE OF FINE ARTS — rust-orange rotunda + partial colonnade, Marin tile (46,12) ──
+      // A large open drum topped by a hemispherical dome, flanked by a short colonnade arc.
+      (function () {
+        var tx = 46, tz = 12;   // Marin zone, z=12 is in [5,20) — confirmed land
+        var wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+
+        var MAT_RUST   = new THREE.MeshStandardMaterial({ color: 0xB85C2A, roughness: 0.82, metalness: 0.04 });  // warm orange terracotta
+        var MAT_RUST_D = new THREE.MeshStandardMaterial({ color: 0x8A3D18, roughness: 0.90, metalness: 0.02 });  // darker shadow tone
+        var MAT_STONE  = new THREE.MeshStandardMaterial({ color: 0xD4B896, roughness: 0.78, metalness: 0.03 });  // pale colonnade stone
+        var MAT_GREEN  = new THREE.MeshStandardMaterial({ color: 0x4A7A3A, roughness: 0.95, metalness: 0.0  });  // lawn/ground
+
+        // Ground lawn disk
+        var lawn = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 0.4, 20), MAT_GREEN);
+        lawn.position.set(0, 0.2, 0);
+        lawn.receiveShadow = true;
+        g.add(lawn);
+
+        // Wide circular base platform / stylobate
+        var stylo = new THREE.Mesh(new THREE.CylinderGeometry(9.5, 10.0, 1.8, 20), MAT_RUST_D);
+        stylo.position.set(0, 1.3, 0);
+        stylo.castShadow = true; stylo.receiveShadow = true;
+        g.add(stylo);
+
+        // Main rotunda drum (hollow cylinder approximated as thick-wall cylinder)
+        var drumR = 8.0, drumH = 11.0;
+        var drum = new THREE.Mesh(new THREE.CylinderGeometry(drumR, drumR + 0.4, drumH, 20), MAT_RUST);
+        drum.position.set(0, 2.2 + drumH / 2, 0);
+        drum.castShadow = true;
+        g.add(drum);
+
+        // Attic / parapet ring on top of drum
+        var parapet = new THREE.Mesh(new THREE.CylinderGeometry(drumR + 0.6, drumR + 0.3, 1.2, 20), MAT_RUST_D);
+        parapet.position.set(0, 2.2 + drumH + 0.6, 0);
+        parapet.castShadow = true;
+        g.add(parapet);
+
+        // Dome — approximated as a half-sphere via a SphereGeometry segment
+        // ConeGeometry with many sides produces a reasonable dome profile
+        var domeR = 7.2, domeH = 6.8;
+        var dome = new THREE.Mesh(new THREE.CylinderGeometry(0.5, domeR, domeH, 20), MAT_RUST);
+        dome.position.set(0, 2.2 + drumH + 1.2 + domeH / 2, 0);
+        dome.castShadow = true;
+        g.add(dome);
+
+        // Lantern finial on top of dome
+        var lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1.1, 2.4, 10), MAT_RUST_D);
+        lantern.position.set(0, 2.2 + drumH + 1.2 + domeH + 1.2, 0);
+        lantern.castShadow = true;
+        g.add(lantern);
+
+        // Colonnade arc: 8 free-standing columns in a partial arc around the front of the rotunda
+        // Positioned as a semicircle on the +z (front) side at radius ~12
+        var nCols = 8, arcRadius = 12.5, arcAngle = Math.PI * 0.9; // ~162° arc
+        var arcStart = -arcAngle / 2;
+        var colR = 0.45, colH = 8.0;
+        var MAT_COL = MAT_STONE;
+
+        for (var ci = 0; ci < nCols; ci++) {
+          var angle = arcStart + (ci / (nCols - 1)) * arcAngle;
+          var cx = Math.sin(angle) * arcRadius;
+          var cz = Math.cos(angle) * arcRadius;  // +z is the front
+
+          // Column shaft
+          var col = new THREE.Mesh(new THREE.CylinderGeometry(colR * 0.82, colR, colH, 8), MAT_COL);
+          col.position.set(cx, 0.4 + colH / 2, cz);
+          col.castShadow = true;
+          g.add(col);
+
+          // Column capital
+          var capital = new THREE.Mesh(new THREE.CylinderGeometry(colR * 1.3, colR * 0.85, 0.7, 8), MAT_RUST_D);
+          capital.position.set(cx, 0.4 + colH + 0.35, cz);
+          capital.castShadow = true;
+          g.add(capital);
+
+          // Column base plinth
+          var base = new THREE.Mesh(new THREE.BoxGeometry(colR * 2.6, 0.42, colR * 2.6), MAT_RUST_D);
+          base.position.set(cx, 0.21, cz);
+          g.add(base);
+        }
+
+        // Connecting entablature beam segments between columns (approximated as a curved arc
+        // via short flat boxes between adjacent column pairs)
+        for (var ci = 0; ci < nCols - 1; ci++) {
+          var a1 = arcStart + (ci / (nCols - 1)) * arcAngle;
+          var a2 = arcStart + ((ci + 1) / (nCols - 1)) * arcAngle;
+          var aMid = (a1 + a2) / 2;
+          var bx = Math.sin(aMid) * arcRadius;
+          var bz = Math.cos(aMid) * arcRadius;
+          var beamY = 0.4 + colH + 0.7 + 0.35;
+          var beam = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.65, 0.55), MAT_RUST_D);
+          beam.position.set(bx, beamY, bz);
+          beam.rotation.y = -(a1 + a2) / 2;  // orient beam segment tangent to arc
+          beam.castShadow = true;
+          g.add(beam);
+        }
+
+        g.position.set(wx, 0, wz);
+        scene.add(g);
+        groups.push(g);
+      })();
+
+      // ── 3. ORACLE-PARK-STYLE BALLPARK — oval stadium at tile (66,50) ──
+      // Concentric tiered seating stands wrapped around a green outfield, with 4 light towers.
+      // tile (66,50): x=66 in [5,75), z=50 in [28,75) — confirmed on SF land.
+      (function () {
+        var tx = 66, tz = 50;
+        var wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+
+        var MAT_GRASS   = new THREE.MeshStandardMaterial({ color: 0x3A8C35, roughness: 0.97, metalness: 0.0 });  // outfield green
+        var MAT_DIRT    = new THREE.MeshStandardMaterial({ color: 0xAA7744, roughness: 0.95, metalness: 0.0 });  // infield dirt
+        var MAT_STANDS  = new THREE.MeshStandardMaterial({ color: 0xD4C4A8, roughness: 0.88, metalness: 0.02 }); // concrete seats
+        var MAT_WALL    = new THREE.MeshStandardMaterial({ color: 0x2A4A1C, roughness: 0.80, metalness: 0.0 });  // outfield wall
+        var MAT_STREEL  = new THREE.MeshStandardMaterial({ color: 0x8C8880, roughness: 0.50, metalness: 0.55 }); // light tower steel
+        var MAT_LIGHT   = new THREE.MeshStandardMaterial({ color: 0xFFF8E0, roughness: 0.20, metalness: 0.1,
+                                                           emissive: 0xFFF8D0, emissiveIntensity: 0.60 });        // light array glow
+
+        // The stadium is an approximated oval: use CylinderGeometry as a ring proxy
+        // Outer ring (bottom tier of stands) — 16-sided cylinder, wide
+        var outerR = 10.5, innerR = 7.0, ringH = 3.5;
+        // Build stands as stacked tiers of concentric rings
+        // Tier 1 — lower deck
+        var tier1 = new THREE.Mesh(new THREE.CylinderGeometry(outerR, outerR + 0.6, ringH, 16), MAT_STANDS);
+        tier1.position.set(0, ringH / 2, 0);
+        tier1.castShadow = true; tier1.receiveShadow = true;
+        g.add(tier1);
+
+        // Tier 2 — upper deck (slightly inset and taller, stepping inward)
+        var tier2 = new THREE.Mesh(new THREE.CylinderGeometry(outerR - 1.2, outerR, ringH * 0.85, 16), MAT_STANDS);
+        tier2.position.set(0, ringH + (ringH * 0.85) / 2, 0);
+        tier2.castShadow = true;
+        g.add(tier2);
+
+        // Concourse rim wall: thin outer fascia ring
+        var fascia = new THREE.Mesh(new THREE.CylinderGeometry(outerR + 0.7, outerR + 0.9, 1.0, 16), MAT_STANDS);
+        fascia.position.set(0, ringH * 1.85 + 1.0 / 2 + 0.05, 0);
+        fascia.castShadow = true;
+        g.add(fascia);
+
+        // Playing field floor — flat disk inside the stands
+        var field = new THREE.Mesh(new THREE.CylinderGeometry(innerR - 0.5, innerR - 0.5, 0.3, 16), MAT_GRASS);
+        field.position.set(0, 0.15, 0);
+        field.receiveShadow = true;
+        g.add(field);
+
+        // Infield dirt diamond — a smaller rotated box to suggest the infield
+        var infield = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.32, 4.8), MAT_DIRT);
+        infield.position.set(0, 0.16, 0);
+        infield.rotation.y = Math.PI / 4;
+        infield.receiveShadow = true;
+        g.add(infield);
+
+        // Outfield wall — a thin cylinder ring at inner edge of stands
+        var owall = new THREE.Mesh(new THREE.CylinderGeometry(innerR, innerR + 0.3, 1.6, 16), MAT_WALL);
+        owall.position.set(0, 0.8, 0);
+        owall.castShadow = true;
+        g.add(owall);
+
+        // Four light towers at the four cardinal corners of the oval (each a tall pole + lamp array)
+        var towerAngles = [Math.PI * 0.15, Math.PI * 0.85, Math.PI * 1.15, Math.PI * 1.85];
+        var towerRadius = outerR + 1.0;
+        for (var ti = 0; ti < 4; ti++) {
+          var ta = towerAngles[ti];
+          var tx2 = Math.sin(ta) * towerRadius;
+          var tz2 = Math.cos(ta) * towerRadius;
+          var poleH = 9.0;
+
+          // Pole
+          var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, poleH, 6), MAT_STREEL);
+          pole.position.set(tx2, poleH / 2, tz2);
+          pole.castShadow = true;
+          g.add(pole);
+
+          // Lamp arm (short horizontal bar at top)
+          var arm = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.22, 0.22), MAT_STREEL);
+          arm.position.set(tx2, poleH - 0.5, tz2);
+          arm.castShadow = true;
+          g.add(arm);
+
+          // Lamp array box
+          var lamp = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.55, 0.45), MAT_LIGHT);
+          lamp.position.set(tx2, poleH + 0.1, tz2);
+          g.add(lamp);
+        }
+
+        g.position.set(wx, 0, wz);
+        scene.add(g);
+        groups.push(g);
+      })();
+
+      // ── 4. SMALL MARINA — a few sailboat hulls at the SE shoreline tile (73,54) ──
+      // A short floating dock with 3 sailboats (hulls + masts + booms + white sails). Placed at the
+      // east land edge (x=73, water starts x>=75) so its water panel blends into the real bay.
+      (function () {
+        var tx = 73, tz = 54;
+        var wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+
+        var MAT_DOCK    = new THREE.MeshStandardMaterial({ color: 0x8A7260, roughness: 0.90, metalness: 0.0 });  // weathered wood
+        var MAT_HULL_W  = new THREE.MeshStandardMaterial({ color: 0xF2EEE8, roughness: 0.60, metalness: 0.04 }); // white hull
+        var MAT_HULL_B  = new THREE.MeshStandardMaterial({ color: 0x1C3A5A, roughness: 0.55, metalness: 0.10 }); // dark-blue hull accent
+        var MAT_HULL_R  = new THREE.MeshStandardMaterial({ color: 0xC03020, roughness: 0.65, metalness: 0.05 }); // red hull variant
+        var MAT_MAST    = new THREE.MeshStandardMaterial({ color: 0xD8D0C0, roughness: 0.45, metalness: 0.40 }); // aluminum mast
+        var MAT_SAIL    = new THREE.MeshStandardMaterial({ color: 0xF8F4EC, roughness: 0.55, metalness: 0.0,
+                                                           side: 2 });                                            // sail cloth (double-side)
+        var MAT_WATER   = new THREE.MeshStandardMaterial({ color: 0x2A5A88, roughness: 0.08, metalness: 0.50,
+                                                           emissive: 0x0A2040, emissiveIntensity: 0.12 });        // still water panel
+
+        // Water surface panel
+        var waterPanel = new THREE.Mesh(new THREE.BoxGeometry(18, 0.18, 12), MAT_WATER);
+        waterPanel.position.set(0, -0.35, 0);
+        waterPanel.receiveShadow = true;
+        g.add(waterPanel);
+
+        // Main dock plank running along Z
+        var dock = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.32, 11), MAT_DOCK);
+        dock.position.set(0, 0.16, 0);
+        dock.castShadow = true; dock.receiveShadow = true;
+        g.add(dock);
+
+        // Three finger piers jutting off the main dock
+        var slipOffsets = [-4.0, 0.0, 4.0];
+        for (var pi = 0; pi < 3; pi++) {
+          var pier = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.22, 0.55), MAT_DOCK);
+          pier.position.set(2.0, 0.11, slipOffsets[pi]);
+          pier.receiveShadow = true;
+          g.add(pier);
+        }
+
+        // Three sailboats, one per slip
+        var hullColors = [MAT_HULL_W, MAT_HULL_B, MAT_HULL_R];
+        for (var bi = 0; bi < 3; bi++) {
+          var bx = 4.8, bz = slipOffsets[bi];
+          var hullMat = hullColors[bi];
+
+          // Hull main body (tapered box suggesting a boat form)
+          var hull = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.9, 4.2), hullMat);
+          hull.position.set(bx, 0.45, bz);
+          hull.castShadow = true;
+          g.add(hull);
+
+          // Hull keel / belly (slightly narrower wedge at waterline)
+          var keel = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 3.6), MAT_HULL_B);
+          keel.position.set(bx, 0.0, bz);
+          keel.castShadow = true;
+          g.add(keel);
+
+          // Cabin house (small box amidships)
+          var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.7, 1.4), MAT_HULL_W);
+          cabin.position.set(bx, 1.25, bz - 0.2);
+          cabin.castShadow = true;
+          g.add(cabin);
+
+          // Mast (tall thin cylinder)
+          var mastH = 7.0;
+          var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, mastH, 6), MAT_MAST);
+          mast.position.set(bx, 0.9 + mastH / 2, bz + 0.3);
+          mast.castShadow = true;
+          g.add(mast);
+
+          // Boom (horizontal spar at foot of sail)
+          var boom = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 2.8, 5), MAT_MAST);
+          boom.position.set(bx - 0.7, 0.9 + 0.6, bz + 0.3);
+          boom.rotation.z = Math.PI / 2;
+          g.add(boom);
+
+          // Mainsail — a triangular approximation using a thin flat box leaning aft
+          var sailH = 5.2, sailW = 2.2;
+          var sail = new THREE.Mesh(new THREE.BoxGeometry(sailW, sailH, 0.04), MAT_SAIL);
+          sail.position.set(bx - sailW / 4, 0.9 + sailH / 2 + 0.4, bz + 0.3);
+          sail.rotation.y = 0.18;   // slight angle so it reads as bellied sail
+          sail.castShadow = true;
+          g.add(sail);
+        }
+
+        g.position.set(wx, 0, wz);
+        scene.add(g);
+        groups.push(g);
+      })();
+
+      return groups;
+    }
     var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs, storefrontGroup];
     var _sfLM = buildSFLandmarks(); for (var _lmi = 0; _lmi < _sfLM.length; _lmi++) cityHideable.push(_sfLM[_lmi]);
+    var _sfLM2 = buildMoreLandmarks(); for (var _lm2 = 0; _lm2 < _sfLM2.length; _lm2++) cityHideable.push(_sfLM2[_lm2]);
     var _bk = buildBanks(); for (var _bki = 0; _bki < _bk.length; _bki++) cityHideable.push(_bk[_bki]);
     var _bz = buildBusinessFronts(); for (var _bzi = 0; _bzi < _bz.length; _bzi++) cityHideable.push(_bz[_bzi]);
 
