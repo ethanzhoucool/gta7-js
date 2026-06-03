@@ -889,6 +889,15 @@ function run() {
     var snap = JSON.parse(JSON.stringify(GIN.serializeSave()));
     var le = GTA3D.createEngine(), LW = le.world, LIN = le._internal; LIN.applySave(snap);
     assert.ok(LW.player.maxHp === GW.player.maxHp && Math.abs(LW.player.runMul - GW.player.runMul) < 1e-6 && LW.player.strength === GW.player.strength, 'gym gains persist across save/load');
+    // REGRESSION: HP boosts from other sources must never LOWER a gym-trained player's max HP
+    var he = GTA3D.createEngine(), HW = he.world, HIN = he._internal;
+    HW.player.inCar = false; HW.money = 999999;
+    for (var t = 0; t < 12; t++) HIN.buyItem('gym', 0);              // train past 200 max HP
+    assert.ok(HW.player.maxHp > 200, 'gym pushes max HP past 200 (' + HW.player.maxHp + ')');
+    var hpBefore = HW.player.maxHp;
+    var iMax = -1, gItems = HIN.shopCatalog('gun').items; for (var gi = 0; gi < gItems.length; gi++) if (gItems[gi].label.indexOf('Max Health') === 0) iMax = gi;
+    HIN.buyItem('gun', iMax);
+    assert.ok(HW.player.maxHp >= hpBefore, 'gun-shop Max Health upgrade never reduces a trained max HP (' + hpBefore + ' -> ' + HW.player.maxHp + ')');
   })();
 
   // 9o) drifting: at speed, handbrake + steer breaks the rear loose into a real slide, and the

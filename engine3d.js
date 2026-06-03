@@ -429,13 +429,13 @@
         { label: 'Rifle [4]', price: 7500, apply: function () { giveWeapon('rifle'); } },
         { label: 'Damage Upgrade', price: 1200, apply: function () { W.player.gunDmgMul = Math.min(3, W.player.gunDmgMul + 0.5); } },
         { label: 'Fire-Rate Upgrade', price: 1000, apply: function () { W.player.fireRateMul = Math.max(0.35, W.player.fireRateMul - 0.18); } },
-        { label: 'Max Health +25', price: 1500, apply: function () { W.player.maxHp = Math.min(200, W.player.maxHp + 25); W.player.hp = W.player.maxHp; } }
+        { label: 'Max Health +25', price: 1500, apply: function () { W.player.maxHp = Math.min(300, W.player.maxHp + 25); W.player.hp = W.player.maxHp; } } // cap matches the gym (300) so it never lowers a trained player's HP
       ]},
       car: { name: 'Premium Deluxe Motors', items: [
         { label: 'Sedan', price: 1500, apply: function () { grantCar(1); } },
         { label: 'Sports Car', price: 6000, apply: function () { grantCar(2); } },
         { label: 'Supercar', price: 20000, apply: function () { grantCar(3); } },
-        { label: 'Repair / Respray', price: 150, apply: function () { if (W.playerCar) { W.playerCar.hp = 120; W.playerCar.color = choice(CAR_COLORS); if (W.wanted > 0 && !W.seen) { W.wanted--; W.lkpValid = false; } } } },
+        { label: 'Repair / Respray', price: 150, apply: function () { if (W.playerCar) { W.playerCar.hp = 120; W.playerCar.color = choice(CAR_COLORS); W.carMods.paint = null; if (W.wanted > 0 && !W.seen) { W.wanted--; W.lkpValid = false; } } } }, // clear custom paint so a re-tier doesn't snap back
         { label: 'Sport Tires (grip + handling)', price: 3000, apply: function () { W.carMods.grip = Math.min(1.4, (W.carMods.grip || 1) + 0.12); W.carMods.turn = Math.min(1.4, (W.carMods.turn || 1) + 0.10); if (W.playerCar) applyCarTier(W.playerCar, W.playerCar.tier || W.ownedCarTier); } },
         { label: 'Performance Tune (speed + accel)', price: 5000, apply: function () { W.carMods.engine = Math.min(1.5, (W.carMods.engine || 1) + 0.15); W.carMods.top = Math.min(1.4, (W.carMods.top || 1) + 0.12); if (W.playerCar) applyCarTier(W.playerCar, W.playerCar.tier || W.ownedCarTier); } },
         { label: 'Custom Paint Job', price: 800, apply: function () { var col = choice(CAR_COLORS); W.carMods.paint = col; if (W.playerCar) W.playerCar.color = col; } }
@@ -941,7 +941,7 @@
       var R = W.rampage; if (!R) return;
       W.player.gunDmgMul = R.prevDmg; // restore the buff
       if (won) { W.money += R.reward; popCash(R.reward); W.rampagesDone = (W.rampagesDone || 0) + 1; post('@you', '🔥 RAMPAGE complete! +$' + R.reward);
-        if (W.rampagesDone >= 3) unlock('rampageVet', 'Rampage legend — max health +25.', function () { W.player.maxHp = Math.min(250, W.player.maxHp + 25); W.player.hp = W.player.maxHp; }); }
+        if (W.rampagesDone >= 3) unlock('rampageVet', 'Rampage legend — max health +25.', function () { W.player.maxHp = Math.min(300, W.player.maxHp + 25); W.player.hp = W.player.maxHp; }); }
       else post('@you', '⏱ Rampage failed (' + (W.kills - R.kills0) + '/' + R.target + ').');
       W.rampage = null;
     }

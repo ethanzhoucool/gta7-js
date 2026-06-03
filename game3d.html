@@ -3147,7 +3147,9 @@
             // wheelMouseAngle is the raw atan2 result in [-PI, PI], 0 = right.
             // Rotate so 0 = top: subtract PI/2 then normalise to [0, 2PI).
             var norm = (wheelMouseAngle - (-Math.PI / 2) + Math.PI * 4) % (Math.PI * 2);
-            wheelHighlight = Math.floor(norm / (Math.PI * 2) * N + 0.5) % N;
+            // plain floor (no +0.5): sectors are DRAWN starting at the top, so the index must too —
+            // the half-sector offset wrapped the last sector's upper half back to sector 0.
+            wheelHighlight = Math.floor(norm / ((Math.PI * 2) / N)) % N;
         }
 
         var ctx = wheelCtx;
