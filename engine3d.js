@@ -210,6 +210,17 @@
     heights[HERO_PYRAMID.z][HERO_PYRAMID.x] = HERO_PYRAMID.h;  // Transamerica-style hero spike
     W.buildingHeights = heights;
     W._heroTowers = { sales: HERO_SALES, pyramid: HERO_PYRAMID };
+    // Per-tile building ARCHETYPE (renderer draws a distinct silhouette/facade per type).
+    // 0 = Victorian row-house, 1 = downtown glass tower, 2 = modern flat-top, 3 = dockside warehouse.
+    // Block-level hash so whole blocks share a style (coherent neighbourhoods).
+    function archetypeFor(x, z) {
+      if (inDowntown(x, z)) return 1;
+      if (z >= CHANNEL_Z1 && z < CHANNEL_Z1 + 7) return 3;            // SF waterfront strip below the strait
+      return (hash2((x / 5) | 0, (z / 5) | 0) < 0.35) ? 2 : 0;        // ~35% modern blocks, rest Victorian
+    }
+    var arche = new Array(MAP);
+    for (var az = 0; az < MAP; az++) { arche[az] = new Array(MAP); for (var ax = 0; ax < MAP; ax++) arche[az][ax] = archetypeFor(ax, az); }
+    W.buildingArchetypes = arche;
 
     /* ----- map helpers ----- */
     function tileType(tx, tz) {
@@ -609,7 +620,7 @@
     // real upgrade — SMG sprays fast, rifle hits hard + far, shotgun shreds up close.
     var WEAPON_DEFS = {
       pistol:  { name: 'Pistol',  dmg: 34, cd: 0.42, pellets: 1, spread: 0,    range: 1.0 },
-      smg:     { name: 'SMG',     dmg: 18, cd: 0.08, pellets: 1, spread: 0.03, range: 1.0 },
+      smg:     { name: 'SMG',     dmg: 18, cd: 0.08, pellets: 1, spread: 0.018, range: 1.0 }, // tighter recoil
       shotgun: { name: 'Shotgun', dmg: 16, cd: 0.7,  pellets: 7, spread: 0.22, range: 0.7 },
       rifle:   { name: 'Rifle',   dmg: 46, cd: 0.18, pellets: 1, spread: 0,    range: 1.5 }
     };

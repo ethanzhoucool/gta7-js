@@ -468,87 +468,320 @@
 
     // Walk-in interiors: an enclosed room (its own walls occlude the city) built at the shop's
     // spot when W.interior is set. cityHideable is toggled so the outside world doesn't show.
+    // ── SF parody landmarks: a few hand-placed static meshes so the skyline reads as SF ──
+    function buildSFLandmarks() {
+      var groups = [];
+      // 1. TRANSAMERICA-style white pyramid at downtown tile (54,36)
+      (function () {
+        var tx = 54, tz = 36, wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+        var WHITE = new THREE.MeshStandardMaterial({ color: 0xEFEDE8, roughness: 0.35, metalness: 0.05 });
+        var WHITE_DARK = new THREE.MeshStandardMaterial({ color: 0xD4D2CC, roughness: 0.55, metalness: 0.02 });
+        var podium = new THREE.Mesh(new THREE.BoxGeometry(7, 10, 7), WHITE_DARK); podium.position.set(0, 5, 0); podium.castShadow = true; podium.receiveShadow = true; g.add(podium);
+        var shaft = new THREE.Mesh(new THREE.BoxGeometry(4.2, 30, 4.2), WHITE); shaft.position.set(0, 25, 0); shaft.castShadow = true; g.add(shaft);
+        var spire = new THREE.Mesh(new THREE.ConeGeometry(3.8, 22, 4), WHITE); spire.position.set(0, 51, 0); spire.rotation.y = Math.PI / 4; spire.castShadow = true; g.add(spire);
+        var needle = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.22, 6, 5), WHITE_DARK); needle.position.set(0, 65, 0); needle.castShadow = true; g.add(needle);
+        var WING = new THREE.MeshStandardMaterial({ color: 0xD8D6D0, roughness: 0.6, metalness: 0.02 });
+        [-1, 1].forEach(function (side) { var wing = new THREE.Mesh(new THREE.BoxGeometry(3.2, 16, 3.0), WING); wing.position.set(side * 5.0, 8, 0); wing.castShadow = true; g.add(wing); });
+        g.position.set(wx, 0, wz); scene.add(g); groups.push(g);
+      })();
+      // 2. COIT-style cylindrical tower on a hill, east of downtown tile (72,33)
+      (function () {
+        var tx = 72, tz = 33, wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+        var C1 = new THREE.MeshStandardMaterial({ color: 0xCEC8BC, roughness: 0.82, metalness: 0.0 });
+        var C2 = new THREE.MeshStandardMaterial({ color: 0xB0A898, roughness: 0.90, metalness: 0.0 });
+        var hill = new THREE.Mesh(new THREE.CylinderGeometry(7, 10, 4, 10), C2); hill.position.set(0, 2, 0); hill.receiveShadow = true; g.add(hill);
+        var body = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.8, 26, 14), C1); body.position.set(0, 17, 0); body.castShadow = true; g.add(body);
+        var collar = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 3.5, 1.8, 14), C2); collar.position.set(0, 30.9, 0); collar.castShadow = true; g.add(collar);
+        var cap = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.8, 0.9, 14), C1); cap.position.set(0, 32.25, 0); cap.castShadow = true; g.add(cap);
+        g.position.set(wx, 0, wz); scene.add(g); groups.push(g);
+      })();
+      // 3. FERRY-BUILDING-style clock tower on the SF waterfront tile (38,29)
+      (function () {
+        var tx = 38, tz = 29, wx = tx * TILE + TILE / 2, wz = tz * TILE + TILE / 2;
+        var g = new THREE.Group(); g.frustumCulled = false;
+        var S1 = new THREE.MeshStandardMaterial({ color: 0xC8B88A, roughness: 0.88, metalness: 0.01 });
+        var S2 = new THREE.MeshStandardMaterial({ color: 0xA8986A, roughness: 0.92, metalness: 0.0 });
+        var CLK = new THREE.MeshStandardMaterial({ color: 0x1A1A1A, roughness: 0.5, metalness: 0.1, emissive: 0x111111, emissiveIntensity: 0.15 });
+        var hall = new THREE.Mesh(new THREE.BoxGeometry(TILE * 2.4, 8, TILE * 0.75), S1); hall.position.set(0, 4, 0); hall.castShadow = true; hall.receiveShadow = true; g.add(hall);
+        var arcade = new THREE.Mesh(new THREE.BoxGeometry(TILE * 2.4, 1.2, 0.5), S2); arcade.position.set(0, 7.8, TILE * 0.375 + 0.25); g.add(arcade);
+        var tower = new THREE.Mesh(new THREE.BoxGeometry(5.5, 26, 5.5), S1); tower.position.set(0, 21, 0); tower.castShadow = true; g.add(tower);
+        var band = new THREE.Mesh(new THREE.BoxGeometry(6.4, 1.2, 6.4), S2); band.position.set(0, 30, 0); band.castShadow = true; g.add(band);
+        var belfry = new THREE.Mesh(new THREE.BoxGeometry(6.2, 5, 6.2), S1); belfry.position.set(0, 36.5, 0); belfry.castShadow = true; g.add(belfry);
+        var CY = 36.5, CH = 6.2 / 2 + 0.08;
+        [{ x: CH, z: 0, ry: -Math.PI / 2 }, { x: -CH, z: 0, ry: Math.PI / 2 }, { x: 0, z: CH, ry: 0 }, { x: 0, z: -CH, ry: Math.PI }].forEach(function (cf) {
+          var face = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.2, 0.18), CLK); face.position.set(cf.x, CY, cf.z); face.rotation.y = cf.ry; g.add(face);
+        });
+        var roof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 4.5, 4), S2); roof.position.set(0, 41.25, 0); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+        g.position.set(wx, 0, wz); scene.add(g); groups.push(g);
+      })();
+      return groups;
+    }
     var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs, storefrontGroup];
+    var _sfLM = buildSFLandmarks(); for (var _lmi = 0; _lmi < _sfLM.length; _lmi++) cityHideable.push(_sfLM[_lmi]);
 
-    // ── SECOND PASS: architectural-detail layers (setbacks / cornices / peaks / bay windows /
-    // ground-floor plinths) — additive InstancedMesh layers, never touch the main placement loop.
     function buildBuildingDetails() {
+      // ── Build a set of shop tile keys so we skip their plinth band ──────────
       var shopTileSet = {};
-      for (var si = 0; si < W.shops.length; si++) {
-        var sh = W.shops[si];
-        shopTileSet[Math.floor((sh.bx != null ? sh.bx : sh.x) / TILE) + ',' + Math.floor((sh.bz != null ? sh.bz : sh.z) / TILE)] = true;
+      for (var _si = 0; _si < W.shops.length; _si++) {
+        var _sh = W.shops[_si];
+        shopTileSet[Math.floor((_sh.bx != null ? _sh.bx : _sh.x) / TILE) + ',' +
+                    Math.floor((_sh.bz != null ? _sh.bz : _sh.z) / TILE)] = true;
       }
+
+      // ── Road-facing direction helper ─────────────────────────────────────────
       var DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
       function roadFacing(tx, tz) {
-        for (var di = 0; di < 4; di++) { var nx = tx + DIRS4[di][0], nz = tz + DIRS4[di][1];
-          if (nx >= 0 && nz >= 0 && nx < MAP && nz < MAP && W.grid[nz][nx] === K.T_ROAD) return DIRS4[di]; }
+        for (var di = 0; di < 4; di++) {
+          var nx = tx + DIRS4[di][0], nz = tz + DIRS4[di][1];
+          if (nx >= 0 && nz >= 0 && nx < MAP && nz < MAP && W.grid[nz][nx] === K.T_ROAD) return DIRS4[di];
+        }
         return null;
       }
-      var nSetback = 0, nCornice = 0, nPeak = 0, nBayWin = 0, nPlinth = 0, bx2, bz2, hgt2, facing2;
-      for (bz2 = 0; bz2 < MAP; bz2++) for (bx2 = 0; bx2 < MAP; bx2++) {
-        if (W.grid[bz2][bx2] !== K.T_BUILDING) continue;
-        hgt2 = W.buildingHeights[bz2][bx2]; nCornice++;
-        if (hgt2 >= 18) nSetback++; else if (hgt2 > 9 && hgt2 < 18 && bhash(bz2 + 2, bx2 + 5) < 0.5) nPeak++; // SAME condition as the fill pass
-        facing2 = roadFacing(bx2, bz2);
-        if (facing2) { if (hgt2 <= 12) nBayWin++; if (!shopTileSet[bx2 + ',' + bz2]) nPlinth++; }
-      }
-      nSetback = Math.max(1, nSetback); nCornice = Math.max(1, nCornice); nPeak = Math.max(1, nPeak); nBayWin = Math.max(1, nBayWin); nPlinth = Math.max(1, nPlinth);
-      var matSetback = new THREE.MeshStandardMaterial({ color: 0x7aaac8, roughness: 0.18, metalness: 0.45, transparent: true, opacity: 0.82 });
-      var matCornice = new THREE.MeshStandardMaterial({ color: 0xc8c4bc, roughness: 0.88, metalness: 0.04, vertexColors: true });
-      var matBayWin = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, metalness: 0.06, vertexColors: true });
-      var matPlinth = new THREE.MeshStandardMaterial({ color: 0x1e2028, roughness: 0.82, metalness: 0.12, vertexColors: true });
-      var imSetback = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.58, 3, TILE * 0.58), matSetback, nSetback);
-      var imCornice = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.92, 0.55, TILE * 0.92), matCornice, nCornice);
-      var imPeak = new THREE.InstancedMesh(new THREE.ConeGeometry(TILE * 0.30, 3.2, 4), matCornice, nPeak);
-      var imBayWin = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.38, 2.4, 0.80), matBayWin, nBayWin);
-      var imPlinth = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.86, 1.0, 0.25), matPlinth, nPlinth);
-      var _dm4 = new THREE.Matrix4(), _dcol = new THREE.Color();
-      var iSetback = 0, iCornice = 0, iPeak = 0, iBayWin = 0, iPlinth = 0;
-      var PASTEL = [0xEAD7C2, 0xD8E0C8, 0xCBD9E6, 0xEAD0D0, 0xE6D6B8, 0xD8CFE0, 0xCFE0DA, 0xF0E8DC];
-      var GLASS = [0x5C7A99, 0x4A7A82, 0x6E8FB0];
+
+      // ── COUNT PASS ──────────────────────────────────────────────────────────
+      var nSetback1 = 0, nSetback2 = 0, nSpire = 0;
+      var nVRoof = 0, nBayWin = 0;
+      var nParapet = 0;
+      var nSawtooth = 0, nDock = 0;
+      var nPlinth = 0;
+      var bx2, bz2, hgt2, arch2, facing2;
+
       for (bz2 = 0; bz2 < MAP; bz2++) for (bx2 = 0; bx2 < MAP; bx2++) {
         if (W.grid[bz2][bx2] !== K.T_BUILDING) continue;
         hgt2 = W.buildingHeights[bz2][bx2];
-        var cx = bx2 * TILE + TILE / 2, cz = bz2 * TILE + TILE / 2, bh = bhash(bx2, bz2), bh2 = bhash(bz2 + 2, bx2 + 5), downtown = inDowntown(bx2, bz2);
-        if (hgt2 >= 18) {                                   // glass setback cap on towers
-          var capScale = 0.78 + bh * 0.16; _dm4.makeScale(capScale, 1, capScale); _dm4.setPosition(cx, hgt2 + 1.5, cz); imSetback.setMatrixAt(iSetback, _dm4);
-          _dcol.setHex(GLASS[(bx2 * 7 + bz2 * 13) % GLASS.length]); _dcol.r = Math.min(1, _dcol.r + 0.12); _dcol.g = Math.min(1, _dcol.g + 0.12); _dcol.b = Math.min(1, _dcol.b + 0.12);
-          imSetback.setColorAt(iSetback, _dcol); iSetback++;
+        arch2 = (W.buildingArchetypes && W.buildingArchetypes[bz2]) ? W.buildingArchetypes[bz2][bx2] : 0;
+        facing2 = roadFacing(bx2, bz2);
+
+        if (arch2 === 1) {
+          if (hgt2 >= 18) { nSetback1++; nSetback2++; }
+          if (hgt2 >= 30) nSpire++;
+        } else if (arch2 === 0) {
+          if (hgt2 <= 14) nVRoof++;
+          if (facing2 && hgt2 <= 12) nBayWin++;
+        } else if (arch2 === 2) {
+          nParapet += 4;
+        } else if (arch2 === 3) {
+          nSawtooth += 3;
+          if (facing2) nDock++;
         }
-        var corniceW = 0.88 + bh * 0.10; _dm4.makeScale(corniceW, 1, corniceW); _dm4.setPosition(cx, hgt2 + 0.275, cz); imCornice.setMatrixAt(iCornice, _dm4);
-        if (downtown) _dcol.setRGB(0.86, 0.87, 0.88); else { _dcol.setHex(PASTEL[(bx2 * 3 + bz2 * 5) % PASTEL.length]); var avg = (_dcol.r + _dcol.g + _dcol.b) / 3; _dcol.r = _dcol.r * 0.5 + avg * 0.5; _dcol.g = _dcol.g * 0.5 + avg * 0.5; _dcol.b = _dcol.b * 0.5 + avg * 0.5; }
-        imCornice.setColorAt(iCornice, _dcol); iCornice++;
-        if (hgt2 > 9 && hgt2 < 18 && bh2 < 0.5) {           // peaked roof on mid-rise
-          _dm4.makeScale(1, 1, 1); _dm4.setPosition(cx, hgt2 + 1.6, cz); imPeak.setMatrixAt(iPeak, _dm4);
-          if (bh < 0.33) _dcol.setRGB(0.52, 0.45, 0.38); else if (bh < 0.66) _dcol.setRGB(0.44, 0.54, 0.42); else _dcol.setRGB(0.72, 0.68, 0.60);
-          imPeak.setColorAt(iPeak, _dcol); iPeak++;
-        }
-        facing2 = roadFacing(bx2, bz2); if (!facing2) continue;
-        var fdx = facing2[0], fdz = facing2[1];
+
+        if (facing2 && !shopTileSet[bx2 + ',' + bz2]) nPlinth++;
+      }
+
+      nSetback1 = Math.max(1, nSetback1); nSetback2 = Math.max(1, nSetback2);
+      nSpire = Math.max(1, nSpire);
+      nVRoof = Math.max(1, nVRoof); nBayWin = Math.max(1, nBayWin);
+      nParapet = Math.max(1, nParapet);
+      nSawtooth = Math.max(1, nSawtooth); nDock = Math.max(1, nDock);
+      nPlinth = Math.max(1, nPlinth);
+
+      // ── MATERIALS ────────────────────────────────────────────────────────────
+      var matGlassCap = new THREE.MeshStandardMaterial({
+        color: 0x88b8d8, roughness: 0.08, metalness: 0.55,
+        transparent: true, opacity: 0.80, vertexColors: true
+      });
+      var matSpire = new THREE.MeshStandardMaterial({
+        color: 0xb8ccd8, roughness: 0.15, metalness: 0.70, vertexColors: true
+      });
+      var matVRoof = new THREE.MeshStandardMaterial({
+        color: 0xc0896a, roughness: 0.82, metalness: 0.04, vertexColors: true
+      });
+      var matBayWin = new THREE.MeshStandardMaterial({
+        color: 0xffffff, roughness: 0.70, metalness: 0.06, vertexColors: true
+      });
+      var matParapet = new THREE.MeshStandardMaterial({
+        color: 0x9a9c9e, roughness: 0.92, metalness: 0.05, vertexColors: true
+      });
+      var matSawtooth = new THREE.MeshStandardMaterial({
+        color: 0x7a7260, roughness: 0.90, metalness: 0.08, vertexColors: true
+      });
+      var matDock = new THREE.MeshStandardMaterial({
+        color: 0x3a3830, roughness: 0.88, metalness: 0.10, vertexColors: true
+      });
+      var matPlinth = new THREE.MeshStandardMaterial({
+        color: 0x1e2028, roughness: 0.82, metalness: 0.12, vertexColors: true
+      });
+
+      // ── GEOMETRIES + INSTANCED MESHES ────────────────────────────────────────
+      var imSetback1 = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE * 0.62, 3.5, TILE * 0.62), matGlassCap, nSetback1);
+      var imSetback2 = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE * 0.40, 2.8, TILE * 0.40), matGlassCap, nSetback2);
+      var imSpire = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(0.28, 6.0, 0.28), matSpire, nSpire);
+      var imVRoof = new THREE.InstancedMesh(
+        new THREE.ConeGeometry(TILE * 0.40, 3.6, 4), matVRoof, nVRoof);
+      var imBayWin = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE * 0.36, 2.2, 0.85), matBayWin, nBayWin);
+      var imParapet = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE * 0.90, 0.65, 0.45), matParapet, nParapet);
+      var sawGeo = new THREE.ConeGeometry(1.2, TILE * 0.80, 3);
+      sawGeo.rotateZ(Math.PI / 2);
+      var imSawtooth = new THREE.InstancedMesh(sawGeo, matSawtooth, nSawtooth);
+      var imDock = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE * 0.82, 1.5, 0.35), matDock, nDock);
+      var imPlinth = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(TILE * 0.86, 1.0, 0.25), matPlinth, nPlinth);
+
+      // ── FILL PASS ────────────────────────────────────────────────────────────
+      var _dm4 = new THREE.Matrix4(), _dcol = new THREE.Color();
+      var iSetback1 = 0, iSetback2 = 0, iSpire = 0;
+      var iVRoof = 0, iBayWin = 0;
+      var iParapet = 0;
+      var iSawtooth = 0, iDock = 0;
+      var iPlinth = 0;
+
+      var PASTEL = [0xEAD7C2, 0xD8E0C8, 0xCBD9E6, 0xEAD0D0, 0xE6D6B8, 0xD8CFE0, 0xCFE0DA, 0xF0E8DC];
+      var GLASS = [0x5C7A99, 0x4A7A82, 0x6E8FB0];
+
+      for (bz2 = 0; bz2 < MAP; bz2++) for (bx2 = 0; bx2 < MAP; bx2++) {
+        if (W.grid[bz2][bx2] !== K.T_BUILDING) continue;
+        hgt2 = W.buildingHeights[bz2][bx2];
+        arch2 = (W.buildingArchetypes && W.buildingArchetypes[bz2]) ? W.buildingArchetypes[bz2][bx2] : 0;
+        var cx = bx2 * TILE + TILE / 2, cz = bz2 * TILE + TILE / 2;
+        var bh = bhash(bx2, bz2), bh2 = bhash(bz2 + 2, bx2 + 5);
         var fw = 0.80 + bhash(bx2, bz2) * 0.18, fd = 0.80 + bhash(bz2 + 1, bx2 + 2) * 0.18;
-        var halfFace = TILE * 0.42 * (Math.abs(fdx) > 0.5 ? fw : fd);
-        var faceX = cx + fdx * halfFace, faceZ = cz + fdz * halfFace, faceYaw = Math.atan2(fdx, fdz);
-        if (hgt2 <= 12) {                                   // SF bay-window bump-out
-          var lat = (bhash(bx2 + 9, bz2 + 3) - 0.5) * TILE * 0.28;
-          var bwcX = faceX + (-fdz) * lat + fdx * 0.4, bwcZ = faceZ + (fdx) * lat + fdz * 0.4;
-          _dm4.makeRotationY(faceYaw); _dm4.setPosition(bwcX, hgt2 * 0.28 + 1.2, bwcZ); imBayWin.setMatrixAt(iBayWin, _dm4);
-          _dcol.setHex(PASTEL[(bx2 * 3 + bz2 * 5) % PASTEL.length]); imBayWin.setColorAt(iBayWin, _dcol); iBayWin++;
+        facing2 = roadFacing(bx2, bz2);
+
+        // ARCHETYPE 1: Downtown glass towers
+        if (arch2 === 1 && hgt2 >= 18) {
+          _dcol.setHex(GLASS[(bx2 * 7 + bz2 * 13) % GLASS.length]);
+          _dcol.r = Math.min(1.0, _dcol.r + 0.18); _dcol.g = Math.min(1.0, _dcol.g + 0.18); _dcol.b = Math.min(1.0, _dcol.b + 0.22);
+
+          _dm4.makeScale(fw * 0.75, 1, fd * 0.75); _dm4.setPosition(cx, hgt2 + 1.75, cz);
+          imSetback1.setMatrixAt(iSetback1, _dm4);
+          imSetback1.setColorAt(iSetback1, _dcol); iSetback1++;
+
+          _dm4.makeScale(fw * 0.50, 1, fd * 0.50); _dm4.setPosition(cx, hgt2 + 3.5 + 1.4 + 0.5, cz);
+          imSetback2.setMatrixAt(iSetback2, _dm4);
+          imSetback2.setColorAt(iSetback2, _dcol); iSetback2++;
+
+          if (hgt2 >= 30) {
+            _dcol.setRGB(0.72, 0.82, 0.88);
+            var spireY = hgt2 + 3.5 + 2.8 + 1.4 + 3.0;
+            var spireOX = (bh - 0.5) * 0.6, spireOZ = (bh2 - 0.5) * 0.6;
+            _dm4.makeScale(1, 1, 1); _dm4.setPosition(cx + spireOX, spireY, cz + spireOZ);
+            imSpire.setMatrixAt(iSpire, _dm4);
+            imSpire.setColorAt(iSpire, _dcol); iSpire++;
+          }
+
+        // ARCHETYPE 0: Victorian row-houses
+        } else if (arch2 === 0) {
+          if (hgt2 <= 14) {
+            var roofIdx = (bx2 * 3 + bz2 * 5) % PASTEL.length;
+            _dcol.setHex(PASTEL[roofIdx]);
+            _dcol.r *= 0.76; _dcol.g *= 0.60; _dcol.b *= 0.52;
+            _dm4.makeRotationY(Math.PI / 4);
+            _dm4.scale(new THREE.Vector3(fw * 0.88, 1, fd * 0.88));
+            _dm4.setPosition(cx, hgt2 + 1.8, cz);
+            imVRoof.setMatrixAt(iVRoof, _dm4);
+            imVRoof.setColorAt(iVRoof, _dcol); iVRoof++;
+          }
+
+          if (facing2 && hgt2 <= 12) {
+            var fdx0 = facing2[0], fdz0 = facing2[1];
+            var halfFace0 = TILE * 0.42 * (Math.abs(fdx0) > 0.5 ? fw : fd);
+            var faceX0 = cx + fdx0 * halfFace0, faceZ0 = cz + fdz0 * halfFace0;
+            var faceYaw0 = Math.atan2(fdx0, fdz0);
+            var lat = (bhash(bx2 + 9, bz2 + 3) - 0.5) * TILE * 0.26;
+            var bwcX = faceX0 + (-fdz0) * lat + fdx0 * 0.42;
+            var bwcZ = faceZ0 + (fdx0) * lat + fdz0 * 0.42;
+            _dcol.setHex(PASTEL[(bx2 * 3 + bz2 * 5) % PASTEL.length]);
+            _dm4.makeRotationY(faceYaw0); _dm4.setPosition(bwcX, hgt2 * 0.30 + 1.1, bwcZ);
+            imBayWin.setMatrixAt(iBayWin, _dm4);
+            imBayWin.setColorAt(iBayWin, _dcol); iBayWin++;
+          }
+
+        // ARCHETYPE 2: Modern flat-top (parapet ring)
+        } else if (arch2 === 2) {
+          var cg = 0.56 + bh * 0.10;
+          _dcol.setRGB(cg, cg * 0.98, cg * 0.96);
+          var halfW2 = TILE * 0.42 * fw, halfD2 = TILE * 0.42 * fd;
+          var POFF_X = [0, 0, halfW2, -halfW2];
+          var POFF_Z = [halfD2, -halfD2, 0, 0];
+          var PYAW = [0, 0, Math.PI / 2, Math.PI / 2];
+          var PSCALE_X = [fw, fw, fd, fd];
+          for (var ps = 0; ps < 4; ps++) {
+            _dm4.makeRotationY(PYAW[ps]);
+            _dm4.scale(new THREE.Vector3(PSCALE_X[ps], 1, 1));
+            _dm4.setPosition(cx + POFF_X[ps], hgt2 + 0.325, cz + POFF_Z[ps]);
+            imParapet.setMatrixAt(iParapet, _dm4);
+            imParapet.setColorAt(iParapet, _dcol); iParapet++;
+          }
+
+        // ARCHETYPE 3: Dockside warehouses
+        } else if (arch2 === 3) {
+          var ir = 0.46 + bh * 0.06, ig = 0.44 + bh2 * 0.06, ib = 0.36 + bh * 0.04;
+          _dcol.setRGB(ir, ig, ib);
+          var sawSpan = fd * TILE * 0.68;
+          var sawStep = sawSpan / 3;
+          var sawZ0 = cz - sawSpan * 0.5 + sawStep * 0.5;
+          var sawScaleX = fw * 0.82;
+          for (var sw2 = 0; sw2 < 3; sw2++) {
+            var sawZpos = sawZ0 + sw2 * sawStep;
+            var jitter = bhash(bx2 + sw2 * 3, bz2 + sw2 * 7) * 0.4;
+            _dm4.makeScale(sawScaleX, 0.55 + jitter, 1);
+            _dm4.setPosition(cx, hgt2 + 0.55 + jitter * 0.5, sawZpos);
+            imSawtooth.setMatrixAt(iSawtooth, _dm4);
+            imSawtooth.setColorAt(iSawtooth, _dcol); iSawtooth++;
+          }
+
+          if (facing2) {
+            var fdxW = facing2[0], fdzW = facing2[1];
+            var halfFaceW = TILE * 0.42 * (Math.abs(fdxW) > 0.5 ? fw : fd);
+            var faceXW = cx + fdxW * halfFaceW, faceZW = cz + fdzW * halfFaceW;
+            var faceYawW = Math.atan2(fdxW, fdzW);
+            _dcol.setRGB(0.22, 0.20, 0.18);
+            _dm4.makeRotationY(faceYawW);
+            var dockScaleX = (Math.abs(fdxW) > 0.5 ? fd : fw);
+            _dm4.scale(new THREE.Vector3(dockScaleX, 1, 1));
+            _dm4.setPosition(faceXW + fdxW * 0.18, 0.75, faceZW + fdzW * 0.18);
+            imDock.setMatrixAt(iDock, _dm4);
+            imDock.setColorAt(iDock, _dcol); iDock++;
+          }
         }
-        if (!shopTileSet[bx2 + ',' + bz2]) {                // dark ground-floor plinth band
-          _dm4.makeRotationY(faceYaw); _dm4.setPosition(faceX + fdx * 0.12, 0.5, faceZ + fdz * 0.12); imPlinth.setMatrixAt(iPlinth, _dm4);
-          var grey = 0.10 + bhash(bx2 + 20, bz2 + 40) * 0.06; _dcol.setRGB(grey, grey, grey); imPlinth.setColorAt(iPlinth, _dcol); iPlinth++;
+
+        // ALL archetypes: dark ground-floor plinth on road-facing side
+        if (facing2 && !shopTileSet[bx2 + ',' + bz2]) {
+          var fdxP = facing2[0], fdzP = facing2[1];
+          var halfFaceP = TILE * 0.42 * (Math.abs(fdxP) > 0.5 ? fw : fd);
+          var faceXP = cx + fdxP * halfFaceP, faceZP = cz + fdzP * halfFaceP;
+          var faceYawP = Math.atan2(fdxP, fdzP);
+          var grey = 0.10 + bhash(bx2 + 20, bz2 + 40) * 0.06;
+          _dcol.setRGB(grey, grey, grey);
+          _dm4.makeRotationY(faceYawP); _dm4.setPosition(faceXP + fdxP * 0.12, 0.5, faceZP + fdzP * 0.12);
+          imPlinth.setMatrixAt(iPlinth, _dm4);
+          imPlinth.setColorAt(iPlinth, _dcol); iPlinth++;
         }
       }
-      // finalize: set the real draw count, and for an empty layer seed one zero-scale instance so
-      // its instanceColor buffer exists (a vertexColors material with a null instanceColor crashes).
+
+      // ── FINALIZE ────────────────────────────────────────────────────────────
       function finalizeIM(im, used) {
-        if (used === 0) { _dm4.makeScale(0, 0, 0); im.setMatrixAt(0, _dm4); _dcol.setRGB(0, 0, 0); im.setColorAt(0, _dcol); used = 1; im.count = 0; }
-        else im.count = used;
-        im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
-        im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true; scene.add(im); cityHideable.push(im);
+        if (used === 0) {
+          _dm4.makeScale(0, 0, 0); im.setMatrixAt(0, _dm4);
+          _dcol.setRGB(0, 0, 0); im.setColorAt(0, _dcol);
+          im.count = 0;
+        } else {
+          im.count = used;
+        }
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        im.frustumCulled = false;
+        im.castShadow = true; im.receiveShadow = true;
+        scene.add(im); cityHideable.push(im);
       }
-      finalizeIM(imSetback, iSetback); finalizeIM(imCornice, iCornice); finalizeIM(imPeak, iPeak);
-      finalizeIM(imBayWin, iBayWin); finalizeIM(imPlinth, iPlinth);
+
+      finalizeIM(imSetback1, iSetback1);
+      finalizeIM(imSetback2, iSetback2);
+      finalizeIM(imSpire, iSpire);
+      finalizeIM(imVRoof, iVRoof);
+      finalizeIM(imBayWin, iBayWin);
+      finalizeIM(imParapet, iParapet);
+      finalizeIM(imSawtooth, iSawtooth);
+      finalizeIM(imDock, iDock);
+      finalizeIM(imPlinth, iPlinth);
     }
     buildBuildingDetails();
     var interiorGroup = null, interiorActive = false, interiorBuiltType = null;

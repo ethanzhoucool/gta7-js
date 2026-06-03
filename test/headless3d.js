@@ -590,6 +590,13 @@ function run() {
     assert.ok(MW.grid[hs.z][hs.x] === C.T_BUILDING && MW.grid[hp.z][hp.x] === C.T_BUILDING, 'hero towers sit on building tiles');
     assert.ok(MW.buildingHeights[38][62] >= 22, 'downtown tiles are highrise');   // inside DOWNTOWN
     assert.ok(MW.buildingHeights[72][12] <= 9, 'residential tiles are low-rise');  // SF SW, outside downtown
+    // building ARCHETYPES (the renderer draws a distinct silhouette per type)
+    assert.ok(MW.buildingArchetypes && MW.buildingArchetypes.length === C.MAP, 'archetype grid exists');
+    var seen = {}, badArch = 0;
+    for (var az = 0; az < C.MAP; az++) for (var ax = 0; ax < C.MAP; ax++) { if (MW.grid[az][ax] !== C.T_BUILDING) continue; var a = MW.buildingArchetypes[az][ax]; if (a < 0 || a > 3) badArch++; seen[a] = (seen[a] || 0) + 1; }
+    assert.strictEqual(badArch, 0, 'every building archetype is 0..3');
+    assert.strictEqual(MW.buildingArchetypes[38][62], 1, 'downtown tiles are glass towers (archetype 1)'); // inside DOWNTOWN
+    assert.ok(seen[0] > 50 && seen[1] > 5 && seen[2] > 50 && seen[3] > 5, 'all four archetypes are used (' + JSON.stringify(seen) + ')');
     // population scaled to fill the bigger map
     var traffic = MW.cars.filter(function (c) { return c.driver === 'ai'; }).length;
     assert.ok(MW.peds.length >= 60, 'ped population scaled (' + MW.peds.length + ')');
