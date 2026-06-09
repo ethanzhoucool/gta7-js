@@ -2715,6 +2715,19 @@
       }
     })();
 
+    // police bribe pickups: blue spinning octahedra — picking one up while wanted drops a star
+    var bribeMeshes = [];
+    (function placeBribeMeshes() {
+      if (!W.bribes) return;
+      var geo = new THREE.OctahedronGeometry(0.75, 0);
+      var bribeMat = new THREE.MeshStandardMaterial({ color: 0x4a7dff, emissive: 0x2244cc, emissiveIntensity: 0.9, metalness: 0.5, roughness: 0.3 });
+      for (var i = 0; i < W.bribes.length; i++) {
+        var m = new THREE.Mesh(geo, bribeMat);
+        m.position.set(W.bribes[i].x, 1.5, W.bribes[i].z);
+        scene.add(m); bribeMeshes.push(m);
+      }
+    })();
+
     // reusable race-checkpoint marker (cyan), repositioned to the current gate each frame
     var raceMarker = (function () {
       var g = new THREE.Group();
@@ -3924,6 +3937,11 @@
         var pm = packMeshes[pmi], pkd = W.packages[pmi];
         pm.visible = !!pkd && !pkd.got && !W.interior;
         if (pm.visible) { pm.rotation.y = W.time * 2; pm.position.y = 1 + Math.sin(W.time * 2 + pmi) * 0.25; }
+      }
+      for (var bmi = 0; bmi < bribeMeshes.length; bmi++) {
+        var bm = bribeMeshes[bmi], b = W.bribes && W.bribes[bmi];
+        bm.visible = !!(b && b.cd <= 0 && !W.interior);
+        if (bm.visible) { bm.rotation.y = W.time * 2.5; bm.position.y = 1.5 + Math.sin(W.time * 2 + bmi) * 0.3; }
       }
       updateHUD();
       if (wheelOpen) drawWeaponWheel();

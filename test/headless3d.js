@@ -1213,7 +1213,50 @@ function run() {
     checkInvariants(pe, 'packages');
   })();
 
-  // 14) dt extremes
+  // 14) police bribe pickups: 4 bribes placed deterministically, only consumed when
+  //     wanted > 0, respawn after 90 s cd, clearing last star also clears seen flag.
+  (function bribeChecks() {
+    var be = GTA3D.createEngine(), BW = be.world;
+    assert.strictEqual(BW.bribes.length, 4, '4 bribes placed');
+    // deterministic placement
+    var be2 = GTA3D.createEngine();
+    for (var bi = 0; bi < 4; bi++) {
+      assert.ok(BW.bribes[bi].x === be2.world.bribes[bi].x && BW.bribes[bi].z === be2.world.bribes[bi].z, 'bribe placement is deterministic (#' + bi + ')');
+    }
+    // all pairs at least 180u apart
+    for (var bi2 = 0; bi2 < 4; bi2++) for (var bj = bi2 + 1; bj < 4; bj++) {
+      var bd = Math.hypot(BW.bribes[bi2].x - BW.bribes[bj].x, BW.bribes[bi2].z - BW.bribes[bj].z);
+      assert.ok(bd >= 180, 'bribes spread out (' + bi2 + ',' + bj + ' = ' + bd.toFixed(0) + 'u)');
+    }
+    // 0 wanted: walking over a bribe does nothing — not consumed
+    BW.wanted = 0;
+    BW.player.inCar = false; BW.player.x = BW.bribes[0].x; BW.player.z = BW.bribes[0].z;
+    be.step(1 / 60, {});
+    assert.ok(BW.bribes[0].cd <= 0, 'bribe not consumed when wanted=0');
+    assert.strictEqual(BW.wanted, 0, 'wanted stays 0 when no heat');
+    // wanted=3: stepping onto bribe drops 1 star and consumes it
+    BW.wanted = 3; BW.seen = true;
+    BW.player.x = BW.bribes[0].x; BW.player.z = BW.bribes[0].z;
+    be.step(1 / 60, {});
+    assert.strictEqual(BW.wanted, 2, 'bribe drops 1 star (3→2)');
+    assert.ok(BW.bribes[0].cd > 0, 'bribe is on cooldown after pickup');
+    // stepping again immediately does not double-trigger (bribe is on cd)
+    be.step(1 / 60, {});
+    assert.strictEqual(BW.wanted, 2, 'no double-trigger while bribe on cooldown');
+    // wanted=1 on a different active bribe: star drops to 0 and seen cleared
+    BW.wanted = 1; BW.seen = true;
+    BW.player.x = BW.bribes[1].x; BW.player.z = BW.bribes[1].z;
+    be.step(1 / 60, {});
+    assert.strictEqual(BW.wanted, 0, 'last star cleared via bribe');
+    assert.ok(BW.seen === false, 'seen cleared when wanted reaches 0');
+    // respawn: cd ticks down to 0 → bribe becomes active again
+    BW.bribes[1].cd = 0.001;
+    be.step(1 / 60, {});
+    assert.ok(BW.bribes[1].cd <= 0, 'bribe respawns after cooldown expires');
+    checkInvariants(be, 'bribes');
+  })();
+
+  // 15) dt extremes
   eng.step(0, {}); eng.step(0.1, {}); checkInvariants(eng, 'dt-extreme');
 
   console.log('PASS — ' + total + ' steps simulated with no errors.');

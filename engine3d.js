@@ -956,6 +956,48 @@
     }
     function failJob(reason) { if (!W.job) return false; var hadStreak = W.jobCombo; W.jobCombo = 0; W.job = null; post('@Dispatch', '❌ Fare lost (' + reason + ').' + (hadStreak > 2 ? ' Streak of ' + hadStreak + ' broken!' : '')); return true; }
 
+    /* ----- police bribe pickups: 4 spinning star collectibles placed around the city.
+     * Driving or walking through one while wanted drops 1 star and despawns it for
+     * 90 s (then it respawns). Walking over one with 0 stars does nothing — they're
+     * not consumed unless heat actually drops. Transient: no save persistence. ----- */
+    var BRIBE_COUNT = 4, BRIBE_RESPAWN = 90, BRIBE_RADIUS = 2.8;
+    function placeBribes() {
+      var cands = [];
+      for (var tz = WATER_MARGIN; tz < MAP - 2; tz++) for (var tx = WATER_MARGIN; tx < MAP - WATER_MARGIN - 1; tx++) {
+        if (tileType(tx, tz) !== T_PARK) continue;
+        cands.push({ tx: tx, tz: tz, s: hash2(tx * 5 + 3, tz * 11 + 4) });
+      }
+      cands.sort(function (a, b) { return b.s - a.s; });
+      W.bribes = [];
+      for (var i = 0; i < cands.length && W.bribes.length < BRIBE_COUNT; i++) {
+        var c = cands[i], bx = c.tx * TILE + TILE / 2, bz = c.tz * TILE + TILE / 2, ok = true;
+        // nudge onto the sidewalk ring toward an adjacent road — visible from the street
+        if (tileType(c.tx, c.tz - 1) === T_ROAD) bz -= TILE / 2 - 1.6;
+        else if (tileType(c.tx, c.tz + 1) === T_ROAD) bz += TILE / 2 - 1.6;
+        else if (tileType(c.tx - 1, c.tz) === T_ROAD) bx -= TILE / 2 - 1.6;
+        else if (tileType(c.tx + 1, c.tz) === T_ROAD) bx += TILE / 2 - 1.6;
+        for (var j = 0; j < W.bribes.length; j++) if (d2(bx, bz, W.bribes[j].x, W.bribes[j].z) < 180 * 180) { ok = false; break; }
+        // keep bribes clear of hidden packages (they're already placed by this point)
+        if (ok && W.packages && W.packages.length) {
+          for (var k = 0; k < W.packages.length; k++) if (d2(bx, bz, W.packages[k].x, W.packages[k].z) < 60 * 60) { ok = false; break; }
+        }
+        if (ok) W.bribes.push({ x: bx, z: bz, cd: 0 });
+      }
+    }
+    function tickBribes(dt) {
+      for (var i = 0; i < W.bribes.length; i++) {
+        var b = W.bribes[i];
+        if (b.cd > 0) { b.cd -= dt; continue; }
+        if (W.wanted > 0 && d2(b.x, b.z, W.player.x, W.player.z) < BRIBE_RADIUS * BRIBE_RADIUS) {
+          W.wanted--;
+          W.lkpValid = false; W.searchTimer = 0;
+          if (W.wanted === 0) W.seen = false;
+          b.cd = BRIBE_RESPAWN;
+          post('@you', '⭐ Bribe taken — heat down to ' + W.wanted + '★.');
+        }
+      }
+    }
+
     /* ----- hidden packages: 12 collectibles tucked into parks/corners off the road.
      * Deterministic placement (hash-ranked park tiles, min-gap spread) so saves can
      * restore found-flags by index. Walking/driving over one collects it; finding
@@ -1192,6 +1234,7 @@
       placeDepots();
       placeRaces();
       placePackages();
+      placeBribes();
       placeZones();
       placeBanks();
       placeBusinesses();
@@ -2047,6 +2090,7 @@
       }
       tickRace(dt);
       tickPackages();
+      tickBribes(dt);
       tickVigilante(dt);
       tickRampage(dt);
       tickZones(dt);
