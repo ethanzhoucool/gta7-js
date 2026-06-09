@@ -535,21 +535,6 @@
       if (roadAt(xx + 1, zz)) spots.push({ x: cx + off, z: cz, dx: 1, dz: 0 });
       return spots;
     }
-    var PARKED_COLORS = [0xd8d8d8, 0x16181d, 0x8a9097, 0xa33327, 0x2b4d7e, 0x70513c, 0xc2bfae, 0x33524a];
-    function parkedFor(xx, zz, kind) {  // curb-parked car on ~1/3 of straight road tiles
-      if (bhash(xx * 3 + 7, zz * 5 + 1) > 0.34 || inChannel(zz)) return null;
-      // only park against a REAL curb (perpendicular neighbor isn't road) — never on an avenue median
-      var nA = (kind === 0) ? roadAt(xx - 1, zz) : roadAt(xx, zz - 1);
-      var nB = (kind === 0) ? roadAt(xx + 1, zz) : roadAt(xx, zz + 1);
-      if (nA && nB) return null;                       // center lane of a wide slab
-      var side = nA ? 1 : (nB ? -1 : (bhash(xx, zz + 9) < 0.5 ? -1 : 1));
-      var lane = TILE / 2 - 1.5;
-      var jit = (bhash(xx + 4, zz + 2) - 0.5) * 4, flip = bhash(xx + 1, zz + 6) < 0.5 ? 0 : Math.PI;
-      var cx = xx * TILE + TILE / 2, cz = zz * TILE + TILE / 2;
-      var col = PARKED_COLORS[(xx * 5 + zz * 11) % PARKED_COLORS.length];
-      if (kind === 0) return { x: cx + side * lane, z: cz + jit, yaw: flip, col: col };
-      return { x: cx + jit, z: cz + side * lane, yaw: Math.PI / 2 + flip, col: col };
-    }
     var TREE_GREENS = [0x4d8a3c, 0x3f7a36, 0x69a04b, 0x86984a];
     function treesFor(xx, zz) {  // 1-2 jittered, scaled trees per park tile; mix of conifer + broadleaf
       var cx = xx * TILE + TILE / 2, cz = zz * TILE + TILE / 2, out = [];
@@ -567,16 +552,13 @@
     }
 
     /* -- COUNT PASS -- */
-    var nStraight = 0, nHalf = 0, nCross = 0, nBuild = 0, nPark = 0, nWater = 0, nLamp = 0, nParked = 0, nConif = 0, nBlob = 0, x, z, k;
+    var nStraight = 0, nHalf = 0, nCross = 0, nBuild = 0, nPark = 0, nWater = 0, nLamp = 0, nConif = 0, nBlob = 0, x, z, k;
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var t = W.grid[z][x];
       if (t === K.T_ROAD) {
         var kk = roadKind(x, z);
         if (kk === 2) nCross++;
-        else {
-          if (straightLay(x, z, kk).half) nHalf++; else nStraight++;
-          if (parkedFor(x, z, kk)) nParked++;
-        }
+        else if (straightLay(x, z, kk).half) nHalf++; else nStraight++;
       } else if (t === TW) nWater++;
       else {
         nLamp += lampSpotsFor(x, z).length;
@@ -588,7 +570,7 @@
       }
     }
     if (nWater === 0) nWater = 1;  // never allocate a 0-instance mesh
-    nParked = Math.max(1, nParked); nLamp = Math.max(1, nLamp); nConif = Math.max(1, nConif); nBlob = Math.max(1, nBlob);
+    nLamp = Math.max(1, nLamp); nConif = Math.max(1, nConif); nBlob = Math.max(1, nBlob);
 
     /* -- ALLOCATE -- */
     var m4 = new THREE.Matrix4();
@@ -626,20 +608,9 @@
     var lampArms = new THREE.InstancedMesh(lampArmGeo, lampMetalMat, nLamp);
     var lampHeads = new THREE.InstancedMesh(lampHeadGeo, lampHeadMat, nLamp);
     var lampGlowPos = new Float32Array(nLamp * 3);
-    // parked cars (visual set-dressing): body + glass cabin + wheels
-    var pBodyGeo = new THREE.BoxGeometry(2.0, 0.55, 4.4); pBodyGeo.translate(0, 0.62, 0);
-    var pCabGeo = new THREE.BoxGeometry(1.78, 0.46, 2.3); pCabGeo.translate(0, 1.1, -0.15);
-    var pBody = new THREE.InstancedMesh(pBodyGeo,
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.5 }), nParked);
-    var pCab = new THREE.InstancedMesh(pCabGeo,
-      new THREE.MeshStandardMaterial({ color: 0x1b2530, roughness: 0.12, metalness: 0.4 }), nParked);
-    var pWheelGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.26, 10); pWheelGeo.rotateZ(Math.PI / 2);
-    var pWheels = new THREE.InstancedMesh(pWheelGeo,
-      new THREE.MeshStandardMaterial({ color: 0x131318, roughness: 0.8, metalness: 0.1 }), nParked * 4);
 
     /* -- FILL PASS -- */
-    var ri = 0, hi = 0, ci = 0, pi = 0, wi = 0, si = 0, bi = 0, li = 0, pk = 0, ti = 0, tci = 0, tbi = 0;
-    var _v = new THREE.Vector3();
+    var ri = 0, hi = 0, ci = 0, pi = 0, wi = 0, si = 0, bi = 0, li = 0, ti = 0, tci = 0, tbi = 0;
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var cx = x * TILE + TILE / 2, cz = z * TILE + TILE / 2, tt = W.grid[z][x];
       if (tt === K.T_ROAD) {
@@ -649,19 +620,6 @@
           var lay = straightLay(x, z, kind);
           m4.makeRotationY(lay.yaw); m4.setPosition(cx, 0.1, cz);
           if (lay.half) roadsH.setMatrixAt(hi++, m4); else roadsS.setMatrixAt(ri++, m4);
-          var pcar = parkedFor(x, z, kind);
-          if (pcar) {
-            m4.makeRotationY(pcar.yaw); m4.setPosition(pcar.x, 0.2, pcar.z);
-            pBody.setMatrixAt(pk, m4); pCab.setMatrixAt(pk, m4);
-            _bcol.setHex(pcar.col); pBody.setColorAt(pk, _bcol);
-            var WOFF = [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]];
-            for (k = 0; k < 4; k++) {
-              _v.set(WOFF[k][0], 0, WOFF[k][1]).applyAxisAngle(new THREE.Vector3(0, 1, 0), pcar.yaw);
-              m4.makeRotationY(pcar.yaw); m4.setPosition(pcar.x + _v.x, 0.53, pcar.z + _v.z);
-              pWheels.setMatrixAt(pk * 4 + k, m4);
-            }
-            pk++;
-          }
         }
       }
       else if (tt === TW) { m4.makeTranslation(cx, 0.05, cz); water.setMatrixAt(wi++, m4); }
@@ -725,7 +683,7 @@
     // at the origin, so without this the whole city vanishes when you look away.
     var bldgIMs = BCLASS.map(function (cl) { return cl.im; });
     var cityIMs = [roadsS, roadsH, roadsC, parks, trunks, leavesConif, leavesBlob, water, sidewalks, roofs,
-      lampPoles, lampArms, lampHeads, pBody, pCab, pWheels].concat(bldgIMs);
+      lampPoles, lampArms, lampHeads].concat(bldgIMs);
     cityIMs.forEach(function (im) {
       im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im);
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
@@ -733,7 +691,7 @@
     roadsS.receiveShadow = true; roadsH.receiveShadow = true; roadsC.receiveShadow = true; parks.receiveShadow = true;
     bldgIMs.forEach(function (im) { im.castShadow = true; im.receiveShadow = true; });
     trunks.castShadow = true; leavesConif.castShadow = true; leavesBlob.castShadow = true;
-    lampPoles.castShadow = true; pBody.castShadow = true;
+    lampPoles.castShadow = true;
 
     // drifting cloud sprites — static positions, tinted/dimmed by time of day
     var cloudMat = new THREE.SpriteMaterial({ map: makeCloudTex(), transparent: true, opacity: 0.65, depthWrite: false, fog: false });
