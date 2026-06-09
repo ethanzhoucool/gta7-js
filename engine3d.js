@@ -207,7 +207,8 @@
       banks: [], heist: null, heistsDone: 0,              // bank-heist loop (the big score)
       businesses: [], ownedBiz: [], bizVault: [], bizClock: 0, // buyable businesses + their collectable vaults
       weather: 'clear', weatherTimer: 0, timeOfDay: 0,    // day/night + weather (timeOfDay read by renderer)
-      trauma: 0, milestones: {}                           // screen-shake signal + one-time unlock flags
+      trauma: 0, milestones: {},                          // screen-shake signal + one-time unlock flags
+      rep: 0, level: 1, skills: {}                        // street-rep XP → level; owned skill-tree nodes (buySkill)
     };
 
     // precompute building heights for the renderer (deterministic). Downtown zoning box
@@ -587,7 +588,9 @@
       if (W.player.inCar) return false;
       for (var i = 0; i < W.stores.length; i++) { var s = W.stores[i];
         if (s.cooldown <= 0 && d2(s.x, s.z, W.player.x, W.player.z) < 6 * 6) {
-          var take = randInt(120, 320); W.money += take; popCash(take); s.cooldown = 45;
+          var take = Math.round(randInt(120, 320) * (W.skills.fence ? 1.5 : 1)); // skill: Fence
+          W.money += take; popCash(take); s.cooldown = 45;
+          addRep(10);
           // mutually exclusive (same idiom as explodeCar): a COLD robbery floors to 2★;
           // robbing again while already hot ratchets via commitCrime. Calling both would
           // double-count (alertPolice→2 then commitCrime's +1 bump→3) on a cold start.
@@ -628,7 +631,7 @@
     function businessAccrue(dt) {
       for (var k = 0; k < W.ownedBiz.length; k++) { var i = W.ownedBiz[k], d = BUSINESS_DEFS[i];
         if (!d) continue; var cap = d.income * BIZ_VAULT_CAP_S;
-        W.bizVault[i] = Math.min(cap, (W.bizVault[i] || 0) + d.income * dt);
+        W.bizVault[i] = Math.min(cap, (W.bizVault[i] || 0) + d.income * dt * (W.skills.kingpin ? 1.3 : 1)); // skill: Kingpin
       }
     }
     function collectBusiness() { // collect the vault of any owned business you're standing at (on foot)
@@ -678,6 +681,7 @@
           var bonus = (W.wanted === 0) ? Math.round(h.reward * 0.3) : 0; // shook the cops first = cool bonus
           var pay = h.reward + bonus;
           W.money += pay; popCash(pay); W.heistsDone++;
+          addRep(60);
           post('@you', '🏆 Clean getaway! +$' + pay + (bonus ? ' (slipped the cops — bonus!)' : ''));
           if (W.heistsDone >= 3) unlock('heistVet', 'Master thief — the city fears you. 🏦', function () {});
           W.heist = null;
@@ -735,6 +739,7 @@
         ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
         zonesOwned: W.zones.map(function (z) { return !!z.owned; }),
         milestones: m, goalsDone: W.goals.map(function (g) { return !!g.done; }),
+        rep: W.rep, level: W.level, skills: (function () { var sk = {}; for (k in W.skills) if (W.skills.hasOwnProperty(k)) sk[k] = true; return sk; })(),
         player: { maxHp: p.maxHp, armor: p.armor, gunDmgMul: p.gunDmgMul, fireRateMul: p.fireRateMul, strength: p.strength, stamina: p.stamina, runMul: p.runMul, weapon: p.weapon, weapons: wp }
       };
     }
@@ -747,6 +752,8 @@
       if (s.zonesOwned) for (var zi = 0; zi < W.zones.length; zi++) { if (s.zonesOwned[zi]) { W.zones[zi].owned = true; } }
       W.ownedZones = W.zones.filter(function (z) { return z.owned; }).length;
       if (s.milestones) { W.milestones = {}; for (var mk in s.milestones) if (s.milestones.hasOwnProperty(mk)) W.milestones[mk] = s.milestones[mk]; }
+      W.rep = s.rep || 0; W.level = s.level || 1;        // old saves: level 1, no rep
+      W.skills = {}; if (s.skills) for (var sk in s.skills) if (s.skills.hasOwnProperty(sk) && skillDef(sk)) W.skills[sk] = true;
       if (s.goalsDone) for (var gi = 0; gi < W.goals.length; gi++) if (s.goalsDone[gi]) W.goals[gi].done = true;
       if (s.player) { var p = W.player, sp = s.player;
         if (sp.maxHp) { p.maxHp = sp.maxHp; p.hp = sp.maxHp; }
@@ -772,6 +779,57 @@
     // Permanent milestone unlocks (researched: cap each loop with a felt, one-time upgrade).
     function unlock(key, msg, apply) { if (W.milestones[key]) return; W.milestones[key] = true; apply(); W.trauma = Math.min(1, (W.trauma || 0) + 0.3); post('⭐ UNLOCK', msg); }
     function shopDiscount() { return W.milestones.courierVet ? 0.85 : 1; } // courier perk: 15% off everything
+
+    /* ----- street rep + skill tree ----- */
+    // Rep is XP earned by hustling (jobs, robberies, bounties, turf, heists, kills).
+    // Levels gate skill TIERS; each skill also needs the previous tier in its branch
+    // and cash. The renderer sells them from the K menu via buySkill(id).
+    var SKILL_DEFS = [
+      { id: 'slimjim',    branch: 'WHEELMAN', tier: 1, lvl: 1, price: 800,  name: 'Slim Jim',
+        desc: 'pop the lock first — carjackings draw no heat and drivers don\'t fight back' },
+      { id: 'hotwire',    branch: 'WHEELMAN', tier: 2, lvl: 3, price: 2500, name: 'Hotwire',
+        desc: 'swapping into ANY car sheds a star (even an empty one), twice as often' },
+      { id: 'getaway',    branch: 'WHEELMAN', tier: 3, lvl: 5, price: 6000, name: 'Getaway Driver',
+        desc: '+10% top speed and acceleration in every car you drive' },
+      { id: 'pickpocket', branch: 'HUSTLER',  tier: 1, lvl: 1, price: 1000, name: 'Pickpocket',
+        desc: 'muggings pay double and marks recover twice as fast' },
+      { id: 'fence',      branch: 'HUSTLER',  tier: 2, lvl: 3, price: 3000, name: 'Fence',
+        desc: 'store robberies pay +50%' },
+      { id: 'kingpin',    branch: 'HUSTLER',  tier: 3, lvl: 6, price: 8000, name: 'Kingpin',
+        desc: 'businesses earn +30% while you run the streets' },
+      { id: 'quickhands', branch: 'GUNMAN',   tier: 1, lvl: 2, price: 1200, name: 'Quick Hands',
+        desc: 'fire 15% faster with every weapon' },
+      { id: 'ironskin',   branch: 'GUNMAN',   tier: 2, lvl: 4, price: 3500, name: 'Iron Skin',
+        desc: 'take 15% less damage on foot' },
+      { id: 'adrenaline', branch: 'GUNMAN',   tier: 3, lvl: 6, price: 9000, name: 'Adrenaline',
+        desc: 'every kill restores 4 HP' }
+    ];
+    function repForLevel(l) { return 60 * (l - 1) * (l - 1); }  // lvl2=60, 3=240, 4=540, 5=960, 6=1500
+    function addRep(n) {
+      W.rep += n;
+      while (W.rep >= repForLevel(W.level + 1)) {
+        W.level++;
+        W.trauma = Math.min(1, (W.trauma || 0) + 0.2);
+        post('⭐ LEVEL UP', 'Street rep level ' + W.level + ' — check your skills (K).');
+      }
+    }
+    function skillDef(id) { for (var i = 0; i < SKILL_DEFS.length; i++) if (SKILL_DEFS[i].id === id) return SKILL_DEFS[i]; return null; }
+    // why this skill can't be bought right now: 'owned' | 'level' | 'prereq' | null (buyable)
+    function skillLocked(d) {
+      if (W.skills[d.id]) return 'owned';
+      if (W.level < d.lvl) return 'level';
+      if (d.tier > 1) for (var i = 0; i < SKILL_DEFS.length; i++) { var o = SKILL_DEFS[i];
+        if (o.branch === d.branch && o.tier === d.tier - 1 && !W.skills[o.id]) return 'prereq'; }
+      return null;
+    }
+    function buySkill(id) {
+      var d = skillDef(id);
+      if (!d || skillLocked(d) || W.money < d.price) return false;
+      W.money -= d.price; W.skills[id] = true;
+      W.trauma = Math.min(1, (W.trauma || 0) + 0.2);
+      post('🧠 SKILL', d.name + ' learned — ' + d.desc + '.');
+      return true;
+    }
     // Buy-menu state machine. B near a shop opens it; B again buys the highlighted
     // item; N cycles the highlight. Walking away (or entering a car) closes it.
     function tryOpenOrBuy() {
@@ -882,6 +940,7 @@
       var streak = (W.jobCombo - 1) * JOB_STREAK_STEP;              // escalating chain bonus (the real money)
       var pay = Math.max(1, j.base + speedBonus + streak);
       W.money += pay; W.jobsDone++; popCash(pay);
+      addRep(8);
       post('@you', '💵 Delivered! +$' + pay + (W.jobCombo > 1 ? '  🔥streak ' + W.jobCombo + ' (+$' + streak + ')' : '') + (underHalf ? '  ⚡fast' : ''));
       if (W.jobCombo >= 10) unlock('courierVet', 'Courier veteran — 15% off all shops, forever.', function () {});
       W.job = null; offerJob(j.dropX, j.dropZ); // chain a fresh fare from here
@@ -919,6 +978,7 @@
       var t = findPedById(W.vigilante.pedId);
       if (!t || !t.alive) {
         var r = W.vigilante.reward; W.money += r; popCash(r); W.vigilanteCd = 6; // short cd so the chain flows
+        addRep(12);
         W.vigilanteLevel = W.vigilante.level;
         if (W.wanted > 0 && !W.seen) { W.wanted = Math.max(0, W.wanted - 1); W.lkpValid = false; }
         post('@you', '🎯 Fugitive down! +$' + r + '  (chain ' + W.vigilante.level + ' — next pays more)');
@@ -941,7 +1001,7 @@
     function endRampage(won) {
       var R = W.rampage; if (!R) return;
       W.player.gunDmgMul = R.prevDmg; // restore the buff
-      if (won) { W.money += R.reward; popCash(R.reward); W.rampagesDone = (W.rampagesDone || 0) + 1; post('@you', '🔥 RAMPAGE complete! +$' + R.reward);
+      if (won) { W.money += R.reward; popCash(R.reward); W.rampagesDone = (W.rampagesDone || 0) + 1; addRep(30); post('@you', '🔥 RAMPAGE complete! +$' + R.reward);
         if (W.rampagesDone >= 3) unlock('rampageVet', 'Rampage legend — max health +25.', function () { W.player.maxHp = Math.min(300, W.player.maxHp + 25); W.player.hp = W.player.maxHp; }); }
       else post('@you', '⏱ Rampage failed (' + (W.kills - R.kills0) + '/' + R.target + ').');
       W.rampage = null;
@@ -983,7 +1043,7 @@
       // an aggro'd zone with no living gang members is captured
       if (z && z.aggro && !z.owned) {
         var alive = 0; for (var i = 0; i < W.peds.length; i++) if (W.peds[i].gang === z.id && W.peds[i].alive) alive++;
-        if (alive === 0) { z.owned = true; z.aggro = false; W.ownedZones++; post('@you', '🏴 Captured ' + z.name + '! It now pays you.'); }
+        if (alive === 0) { z.owned = true; z.aggro = false; W.ownedZones++; addRep(25); post('@you', '🏴 Captured ' + z.name + '! It now pays you.'); }
       }
     }
     function gangZoneIncome() { var r = 0; for (var i = 0; i < W.zones.length; i++) if (W.zones[i].owned) r += W.zones[i].income; return r; }
@@ -1131,6 +1191,7 @@
       // Per-car stats (set by applyCarTier / applyPoliceTier) override the stock globals so a
       // pricier ride is genuinely faster + grippier; stock traffic/jacked cars fall back to base.
       var topSpd = car.top || CAR_TOP, accel = car.engine || CAR_ENGINE;
+      if (car.driver === 'player' && W.skills.getaway) { topSpd *= 1.1; accel *= 1.1; } // skill: Getaway Driver
       var gripMul = car.gripMul || 1, turnMul = car.turnMul || 1;
       var v = Math.hypot(car.vx, car.vz);
       var heading = car.vx * Math.sin(car.yaw) + car.vz * Math.cos(car.yaw); // signed: fwd vs reverse
@@ -1437,6 +1498,8 @@
       // Cops / bounty fugitives / gang members use a distinct kill path: credit + cash
       // but NO commitCrime — otherwise fighting them you were sent to fight re-escalates
       // wanted and the heat-relief loops can never actually cool you off.
+      if (byPlayer && W.skills.adrenaline) W.player.hp = Math.min(W.player.maxHp, W.player.hp + 4); // skill: Adrenaline
+      if (byPlayer) addRep(p.cop ? 3 : (p.bounty || p.gang !== undefined) ? 2 : 1);
       if (p.cop) { if (byPlayer) { W.kills++; W.money += randInt(15, 40); } return; }
       if (p.bounty) { if (byPlayer) { W.kills++; W.money += randInt(10, 30); } return; }
       if (p.gang !== undefined) { if (byPlayer) { W.kills++; W.money += randInt(10, 35); } return; }
@@ -1510,25 +1573,29 @@
         // CARJACK: yank the driver out; they spill onto the road and flee
         var drv = c.npc;
         drv.inCar = false; drv.x = c.x + Math.cos(c.yaw) * 2.2; drv.z = c.z - Math.sin(c.yaw) * 2.2;
-        drv.alive = true; drv.panic = 5; drv.hostile = drv.tough && Math.random() < 0.5;
+        // skill: Slim Jim — you're in before they react: no heat, no fight, just a confused ex-driver
+        drv.alive = true; drv.panic = 5; drv.hostile = !W.skills.slimjim && drv.tough && Math.random() < 0.5;
         if (W.peds.indexOf(drv) < 0) W.peds.push(drv);
         c.npc = null;
         fx('jack', c.x, 1, c.z);
-        post('@you', '🚗 Carjacked a ' + (drv.hostile ? 'very unhappy ' : '') + 'local.');
-        commitCrime(CRIME.PETTY, c.x, c.z); // witnessed grand theft auto
+        if (W.skills.slimjim) post('@you', '🚗 Slim-jimmed the door — clean jack, no heat.');
+        else { post('@you', '🚗 Carjacked a ' + (drv.hostile ? 'very unhappy ' : '') + 'local.'); commitCrime(CRIME.PETTY, c.x, c.z); } // witnessed grand theft auto
       }
       if (c.onFire || c.exploded) return; // can't commandeer a burning wreck
       c.driver = 'player'; W.playerCar = c; p.inCar = true; p.car = c;
       if (c.carHp === undefined || c.carHp <= 0) c.carHp = PCAR_HP; // every ride has its own HP
-      // swap vehicle while unseen -> shed the description
-      if (W.wanted > 0 && !W.seen && W.disguiseCd <= 0 && hadDriver) {
-        W.wanted--; W.disguiseCd = DISGUISE_CD; W.lkpValid = false; W.searchTimer = 0;
-        post('@you', 'New ride threw off the cops. (' + W.wanted + '★)');
+      // swap vehicle while unseen -> shed the description.
+      // skill: Hotwire — any car works as a disguise (not just occupied ones) and the cooldown halves
+      if (W.wanted > 0 && !W.seen && W.disguiseCd <= 0 && (hadDriver || W.skills.hotwire)) {
+        W.wanted--; W.disguiseCd = W.skills.hotwire ? DISGUISE_CD / 2 : DISGUISE_CD; W.lkpValid = false; W.searchTimer = 0;
+        post('@you', (hadDriver ? 'New ride threw off the cops.' : 'Hotwired a fresh ride — description\'s useless.') + ' (' + W.wanted + '★)');
       }
     }
     function robNearest() {
       var p = nearestPed(3.5); if (!p || p.robbedCd > 0) return;
-      var amt = randInt(15, 60); W.money += amt; popCash(amt, p.x, p.z); p.robbedCd = 12; p.panic = 4;
+      var amt = randInt(15, 60) * (W.skills.pickpocket ? 2 : 1);          // skill: Pickpocket
+      W.money += amt; popCash(amt, p.x, p.z); p.robbedCd = W.skills.pickpocket ? 6 : 12; p.panic = 4;
+      addRep(4);
       if (p.tough && Math.random() < 0.6) { p.hostile = true; p.panic = 0; }
       post('@you', 'Mugged a local for $' + amt + '. 💸');
       commitCrime(CRIME.PETTY, p.x, p.z);
@@ -1541,7 +1608,7 @@
       if ((p.ammo || 0) <= 0) return;
       if (p.ammo < 999999) p.ammo--;                 // unlimited sentinel never decrements meaningfully
       var wd = currentWeaponDef();
-      W.fireCd = wd.cd * (p.fireRateMul || 1);        // per-weapon cooldown × upgrade
+      W.fireCd = wd.cd * (p.fireRateMul || 1) * (W.skills.quickhands ? 0.85 : 1); // per-weapon cooldown × upgrade × skill
       var yaw = (input.aimYaw !== undefined) ? input.aimYaw : p.yaw;
       // vertical aim: up = positive pitch. Renderer solves this from the crosshair ray;
       // headless/AI callers omit it (default flat). Clamped so you can fire near-straight up.
@@ -1608,6 +1675,7 @@
         // car is wrecked & burning: a fraction leaks to the player
         n *= 0.5;
       }
+      if (W.skills.ironskin) n *= 0.85;                  // skill: Iron Skin (body damage only — cars soak full hits)
       if (W.player.armor > 0) { var a = Math.min(W.player.armor, n); W.player.armor -= a; n -= a; } // armor soaks first
       W.player.hp -= n;
       if (flash) W.flash = Math.min(0.4, (W.flash || 0) + flash);
@@ -1945,6 +2013,7 @@
         startHeist: startHeist, tickHeist: tickHeist, nearestBank: nearestBank, collectBusiness: collectBusiness,
         BUSINESS_DEFS: BUSINESS_DEFS, BANK_DEFS: BANK_DEFS,
         serializeSave: serializeSave, applySave: applySave, startTutorial: startTutorial,
+        SKILL_DEFS: SKILL_DEFS, buySkill: buySkill, skillLocked: skillLocked, addRep: addRep, repForLevel: repForLevel, hurtPlayer: hurtPlayer,
         makePolice: makePolice, applyPoliceTier: applyPoliceTier, deployOfficer: deployOfficer, spawnRoadblock: spawnRoadblock, POLICE_TIERS: POLICE_TIERS, policeTier: policeTier, surroundExit: surroundExit }
     };
   }

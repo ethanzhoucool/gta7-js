@@ -70,6 +70,21 @@
     #shop .owned { color: #6bf08a; }
     #shop .pr { float: right; color: #9fd6ff; }
     #shop .shophint { margin-top: 8px; font-size: 11px; color: #8a86a0; }
+    #skills { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 460px; padding: 16px 20px; display: none;
+      background: rgba(10,14,22,.92); border: 1px solid rgba(216,207,254,.35); border-radius: 10px;
+      font: 13px/1.5 monospace; color: #cfd8e3; text-shadow: 0 1px 2px #000; z-index: 40; }
+    #skills h2 { font: bold 17px monospace; color: #ffd23f; margin: 0 0 2px; }
+    #skills .repbar { height: 6px; background: #222; border-radius: 3px; overflow: hidden; margin: 6px 0 10px; }
+    #skills .repbar > div { height: 100%; background: #b9a6ff; }
+    #skills .branch { color: #9ec5ff; font-weight: bold; margin-top: 8px; }
+    #skills .sk { display: flex; gap: 8px; }
+    #skills .sk .key { color: #ffd23f; }
+    #skills .sk .pr { margin-left: auto; color: #9fd6ff; white-space: nowrap; }
+    #skills .sk.owned, #skills .sk.owned .pr { color: #6bf08a; }
+    #skills .sk.locked, #skills .sk.locked .pr, #skills .sk.locked .key { color: #6a6680; }
+    #skills .sk.poor .pr { color: #e7556b; }
+    #skills .desc { font-size: 11px; color: #8a86a0; margin: 0 0 4px 26px; }
+    #skills .hint { margin-top: 10px; font-size: 11px; color: #8a86a0; }
 
     /* ---------------- mobile touch HUD (shown only on touch devices) ---------------- */
     #touchUI { position: fixed; inset: 0; display: none; z-index: 50; pointer-events: none;
@@ -118,10 +133,11 @@
   <div id="prompt"></div>
   <div id="goal" class="ui"></div>
   <div id="popups" class="ui"></div>
+  <div id="skills"></div>
   <div id="shop" class="ui"></div>
   <div id="banner" class="ui"></div>
   <canvas id="mini" class="ui" width="170" height="170"></canvas>
-  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · <b>J job · 1-4/Q weapon</b></div>
+  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · <b>J job · K skills · 1-4/Q weapon</b></div>
   <div id="touchUI">
     <div id="tStickBase"></div>
     <div id="tStickKnob"></div>
@@ -2779,6 +2795,13 @@
     var MOUSE_SENS = 0.0024, AIM_SENS = 0.0013;   // finer sensitivity while aiming (ADS)
     document.addEventListener('keydown', function (e) {
       if (!keys[e.code]) {
+        if (e.code === 'KeyK' && gameStarted) { skillOpen = !skillOpen; if (skillOpen) renderSkillPanel(); skillsEl.style.display = skillOpen ? 'block' : 'none'; }
+        // while the skill panel is up, digits buy skills instead of switching weapons
+        if (skillOpen && /^Digit[1-9]$/.test(e.code)) {
+          var ski = +e.code.slice(5) - 1, skd = IN.SKILL_DEFS && IN.SKILL_DEFS[ski];
+          if (skd) { IN.buySkill(skd.id); renderSkillPanel(); }
+          keys[e.code] = true; return;
+        }
         if (e.code === 'KeyF') justF = true; if (e.code === 'KeyE') justE = true; if (e.code === 'Space') justSpace = true;
         if (e.code === 'KeyB') justB = true; if (e.code === 'KeyN') justN = true; if (e.code === 'KeyH') justH = true;
         if (e.code === 'KeyJ') justJ = true; if (e.code === 'KeyQ') justQ = true;
@@ -3227,6 +3250,32 @@
         elReticle = document.getElementById('reticle'), elShop = document.getElementById('shop'),
         elGoal = document.getElementById('goal'), elPopups = document.getElementById('popups'),
         elHurt = document.getElementById('hurt');
+    var skillsEl = document.getElementById('skills'), skillOpen = false;
+    // Skill-tree panel (K). Rebuilt on open/buy and each HUD tick while open, so
+    // rep gains and level-ups reflect live. Digits 1-9 buy (handled in keydown).
+    function renderSkillPanel() {
+      var defs = IN.SKILL_DEFS || [];
+      var lvl = W.level || 1, rep = W.rep || 0;
+      var cur = IN.repForLevel(lvl), next = IN.repForLevel(lvl + 1);
+      var frac = Math.max(0, Math.min(1, (rep - cur) / Math.max(1, next - cur)));
+      var money$ = function (n) { return '$' + (n | 0).toLocaleString('en-US'); };
+      var h = '<h2>SKILLS — LEVEL ' + lvl + '</h2>' +
+        '<div style="font-size:11px;color:#b9a6ff">rep ' + (rep | 0) + ' / ' + next + ' to level ' + (lvl + 1) + ' &nbsp;·&nbsp; cash <b style="color:#fff">' + money$(W.money) + '</b></div>' +
+        '<div class="repbar"><div style="width:' + (frac * 100).toFixed(0) + '%"></div></div>';
+      var lastBranch = '';
+      for (var i = 0; i < defs.length; i++) {
+        var d = defs[i], why = IN.skillLocked(d);
+        if (d.branch !== lastBranch) { h += '<div class="branch">' + d.branch + '</div>'; lastBranch = d.branch; }
+        var cls = why === 'owned' ? 'owned' : (why ? 'locked' : (W.money < d.price ? 'poor' : ''));
+        var tag = why === 'owned' ? '✔ learned' :
+                  why === 'level' ? '🔒 LVL ' + d.lvl :
+                  why === 'prereq' ? '🔒 needs tier ' + (d.tier - 1) : money$(d.price);
+        h += '<div class="sk ' + cls + '"><span class="key">[' + (i + 1) + ']</span> ' + d.name + '<span class="pr">' + tag + '</span></div>' +
+             '<div class="desc">' + escapeHtml(d.desc) + '</div>';
+      }
+      h += '<div class="hint">press a number to learn · K to close · earn rep by hustling (jobs, robberies, bounties, turf)</div>';
+      skillsEl.innerHTML = h;
+    }
     var popPool = [], _projV = null; // pooled cash-popup divs (created lazily once THREE is up)
     var mini = document.getElementById('mini'), mctx = mini.getContext('2d');
 
@@ -3244,7 +3293,9 @@
       elInfo.innerHTML = '<b>' + money$(W.money) + '</b> &nbsp; <span style="color:#9fd6ff" title="net worth (cash + property + car)">net ' + money$(W.netWorth || 0) + '</span>' +
         (W.player.armor > 0 ? ' &nbsp; <span style="color:#7fd1ff">🛡' + Math.round(W.player.armor) + '</span>' : '') +
         carTxt + ' &nbsp; <span style="color:#ffd27f">🔫 ' + wname + '</span>' +
+        ' &nbsp; <span style="color:#b9a6ff" title="street rep level — press K for skills">LVL ' + (W.level || 1) + '</span>' +
         ' &nbsp; ' + (W.player.inCar ? '[CAR]' : '[FOOT]');
+      if (skillOpen) renderSkillPanel();
       var s = ''; for (var i = 0; i < K.WANTED_MAX; i++) s += (i < W.wanted) ? '★' : '☆';
       elStars.textContent = s; elStars.style.color = W.wanted ? '#ffd23f' : 'rgba(255,255,255,.3)';
       elSeen.textContent = W.wanted ? (W.seen ? 'SEEN' : 'HIDDEN') : '';

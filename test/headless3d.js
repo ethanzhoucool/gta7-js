@@ -1071,7 +1071,54 @@ function run() {
     eng.step(STEP, inp); total++; checkInvariants(eng, 'soak t' + total);
   }
 
-  // 11) dt extremes
+  // 11) skill tree: rep grants levels, levels + prereqs gate tiers, effects apply,
+  //     and purchases/rep survive a save/load roundtrip.
+  (function skillChecks() {
+    var se = GTA3D.createEngine(), SW = se.world, SIN = se._internal;
+    assert.ok(Array.isArray(SIN.SKILL_DEFS) && SIN.SKILL_DEFS.length >= 9, 'skill defs exposed (' + (SIN.SKILL_DEFS || []).length + ')');
+    SW.money = 100000;
+    assert.strictEqual(SW.level, 1, 'fresh game starts at level 1');
+    assert.ok(SIN.buySkill('hotwire') === false, 'tier 2 blocked without tier 1');
+    assert.ok(SIN.buySkill('slimjim') === true, 'tier 1 buys at level 1');
+    assert.strictEqual(SW.money, 100000 - 800, 'slim jim charged $800');
+    assert.ok(SIN.buySkill('slimjim') === false, 'no double-buy');
+    assert.ok(SIN.buySkill('hotwire') === false, 'hotwire still level-locked at level 1');
+    SIN.addRep(10000);
+    assert.ok(SW.level >= 5, 'rep grants levels (got ' + SW.level + ')');
+    assert.ok(SIN.buySkill('hotwire') === true, 'hotwire unlocks once leveled with slim jim owned');
+    assert.ok(SIN.buySkill('ironskin') === false, 'gunman tier 2 still needs quick hands');
+    assert.ok(SIN.buySkill('quickhands') === true && SIN.buySkill('ironskin') === true, 'gunman chain buys in order');
+    // iron skin: 15% less body damage (armorless, on foot)
+    SW.player.inCar = false; SW.player.armor = 0; SW.player.hp = SW.player.maxHp;
+    var hp0 = SW.player.hp;
+    SIN.hurtPlayer(40, 0);
+    assert.ok(Math.abs((hp0 - SW.player.hp) - 34) < 0.01, 'iron skin soaks 15% (took ' + (hp0 - SW.player.hp) + ')');
+    // slim jim: carjacking an occupied car raises no heat and never aggros the driver
+    var jc = null; for (var ci = 0; ci < SW.cars.length; ci++) if (SW.cars[ci].driver === 'ai' && SW.cars[ci].npc) { jc = SW.cars[ci]; break; }
+    assert.ok(jc, 'an occupied AI car exists');
+    SW.player.inCar = false; SW.playerCar = null; SW.wanted = 0; SW.seen = false;
+    SW.player.x = jc.x + 2; SW.player.z = jc.z;
+    var drv = jc.npc;
+    SIN.tryEnterExit();
+    assert.ok(SW.player.inCar && SW.playerCar === jc, 'slim jim jack still enters the car');
+    assert.strictEqual(SW.wanted, 0, 'slim jim carjack draws no heat');
+    assert.ok(!drv.hostile, 'slim jim driver never turns hostile');
+    // save/load roundtrip keeps skills, rep and level
+    var save = SIN.serializeSave();
+    var e2 = GTA3D.createEngine();
+    e2._internal.applySave(save);
+    assert.ok(e2.world.skills.slimjim && e2.world.skills.hotwire && e2.world.skills.ironskin, 'skills survive save/load');
+    assert.strictEqual(e2.world.level, SW.level, 'level survives save/load');
+    assert.strictEqual(e2.world.rep, SW.rep, 'rep survives save/load');
+    // an old save (no skill fields) loads clean at level 1
+    delete save.rep; delete save.level; delete save.skills;
+    var e3 = GTA3D.createEngine();
+    e3._internal.applySave(save);
+    assert.strictEqual(e3.world.level, 1, 'pre-skill saves load at level 1');
+    checkInvariants(se, 'skill-tree');
+  })();
+
+  // 12) dt extremes
   eng.step(0, {}); eng.step(0.1, {}); checkInvariants(eng, 'dt-extreme');
 
   console.log('PASS — ' + total + ' steps simulated with no errors.');
