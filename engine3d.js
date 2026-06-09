@@ -201,6 +201,7 @@
       // --- gameplay loops ---
       popups: [],               // floating +$N cash popups (renderer animates them)
       job: null, jobCombo: 0, jobsDone: 0, jobDepots: [], // courier/taxi fares
+      race: null, raceLevel: 0, racesDone: 0, raceStarts: [], // checkpoint street races (J in a car at a 🏁)
       vigilante: null, vigilanteCd: 0,                    // bounty-hunt loop
       rampage: null, rampagePads: [],                     // kill-streak challenge
       zones: [], ownedZones: 0,                           // gang turf
@@ -694,6 +695,7 @@
         { id: 'sports', label: 'Own a sports car', done: false, test: function () { return W.ownedCarTier >= 2; }, reward: 500 },
         { id: 'fivestar', label: 'Reach a 5-star wanted level', done: false, test: function () { return W.wanted >= 5; }, reward: 1000 },
         { id: 'rampage', label: 'Take down 15 targets', done: false, test: function () { return W.kills >= 15; }, reward: 750 },
+        { id: 'race3', label: 'Win 3 street races', done: false, test: function () { return (W.racesDone || 0) >= 3; }, reward: 600 },
         { id: 'tycoon', label: 'Reach $50,000 net worth', done: false, test: function () { return W.netWorth >= 50000; }, reward: 5000 }
       ];
     }
@@ -734,6 +736,7 @@
       var wp = {}; for (k in p.weapons) if (p.weapons.hasOwnProperty(k)) wp[k] = p.weapons[k];
       return {
         v: 1, money: W.money, kills: W.kills, jobsDone: W.jobsDone, rampagesDone: W.rampagesDone, heistsDone: W.heistsDone,
+        racesDone: W.racesDone | 0, raceLevel: W.raceLevel | 0,
         ownedCarTier: W.ownedCarTier, carMods: { engine: W.carMods.engine, top: W.carMods.top, grip: W.carMods.grip, turn: W.carMods.turn, paint: W.carMods.paint },
         ownedProps: W.ownedProps.slice(), homePropIndex: W.homePropIndex,
         ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
@@ -746,6 +749,7 @@
     function applySave(s) {
       if (!s || typeof s !== 'object') return false;
       W.money = s.money | 0; W.kills = s.kills | 0; W.jobsDone = s.jobsDone | 0; W.rampagesDone = s.rampagesDone | 0; W.heistsDone = s.heistsDone | 0;
+      W.racesDone = s.racesDone | 0; W.raceLevel = s.raceLevel | 0;
       W.ownedCarTier = s.ownedCarTier | 0; W.ownedProps = (s.ownedProps || []).slice(); W.homePropIndex = (s.homePropIndex == null ? null : (s.homePropIndex | 0));
       W.ownedBiz = (s.ownedBiz || []).slice(); W.bizVault = (s.bizVault || []).slice();
       if (s.carMods) { W.carMods.engine = s.carMods.engine || 1; W.carMods.top = s.carMods.top || 1; W.carMods.grip = s.carMods.grip || 1; W.carMods.turn = s.carMods.turn || 1; W.carMods.paint = (s.carMods.paint == null ? null : s.carMods.paint); }
@@ -948,6 +952,55 @@
     }
     function failJob(reason) { if (!W.job) return false; var hadStreak = W.jobCombo; W.jobCombo = 0; W.job = null; post('@Dispatch', '❌ Fare lost (' + reason + ').' + (hadStreak > 2 ? ' Streak of ' + hadStreak + ' broken!' : '')); return true; }
 
+    /* ----- street races: checkpoint sprints (J while in a car at a 🏁 start) -----
+     * Same chain economics as the vigilante loop: each consecutive WIN raises the
+     * level — longer course, bigger purse — and any fail breaks the chain back to 1.
+     * Gates add time (arcade style) so a clean line keeps the run alive. */
+    var RACE_RADIUS = 9, RACE_START_TIME = 14, RACE_GATE_TIME = 5.5, RACE_RATE = 2.2;
+    var RACE_DEFS = [
+      { tx: 40, tz: 58, name: 'Mission Sprint' },
+      { tx: 60, tz: 36, name: 'Downtown Dash' },
+      { tx: 30, tz: 70, name: 'Sunset Loop' }
+    ];
+    function placeRaces() { W.raceStarts = []; for (var i = 0; i < RACE_DEFS.length; i++) { var p = snapToRoad(RACE_DEFS[i].tx, RACE_DEFS[i].tz); W.raceStarts.push({ x: p.x, z: p.z, name: RACE_DEFS[i].name, id: (W._id = (W._id || 0) + 1) }); } }
+    function nearestRaceStart(maxD) { var best = null, bd = maxD * maxD; for (var i = 0; i < W.raceStarts.length; i++) { var s = W.raceStarts[i]; var d = d2(s.x, s.z, W.player.x, W.player.z); if (d < bd) { bd = d; best = s; } } return best; }
+    function startRace() {
+      if (W.race || !W.player.inCar) return false;
+      var s = nearestRaceStart(RACE_RADIUS); if (!s) return false;
+      var lvl = (W.raceLevel || 0) + 1;
+      var n = Math.min(8, 3 + lvl), cps = [], fx0 = s.x, fz0 = s.z, total = 0;
+      for (var i = 0; i < n; i++) {
+        var c = roadNear(fx0, fz0, 70, 140) || randomRoad();
+        total += dist(fx0, fz0, c.x, c.z);
+        cps.push({ x: c.x, z: c.z }); fx0 = c.x; fz0 = c.z;
+      }
+      var reward = Math.round(total * RACE_RATE + lvl * 150);
+      W.race = { name: s.name, i: 0, cps: cps, level: lvl, reward: reward, timeLeft: RACE_START_TIME, offCar: 0 };
+      post('@race', '🏁 ' + s.name + ' #' + lvl + ' — ' + n + ' gates for $' + reward + '. GO!');
+      return true;
+    }
+    function failRace(reason) { if (!W.race) return false; var hadLvl = W.race.level; W.raceLevel = 0; W.race = null; post('@race', '❌ Race lost (' + reason + ').' + (hadLvl > 1 ? ' Chain broken.' : '')); return true; }
+    function tickRace(dt) {
+      var r = W.race; if (!r) return;
+      if (!W.player.inCar) { r.offCar += dt; if (r.offCar > 6) { failRace('left the car'); return; } }
+      else r.offCar = 0;
+      r.timeLeft -= dt;
+      if (r.timeLeft <= 0) { failRace('time'); return; }
+      var cp = r.cps[r.i];
+      if (d2(W.player.x, W.player.z, cp.x, cp.z) < RACE_RADIUS * RACE_RADIUS) {
+        r.i++;
+        if (r.i >= r.cps.length) {
+          W.money += r.reward; popCash(r.reward); W.racesDone = (W.racesDone || 0) + 1; W.raceLevel = r.level;
+          addRep(20 + r.level * 5);
+          post('@you', '🏁 Won ' + r.name + ' #' + r.level + ' — +$' + r.reward + '! Next one pays more.');
+          W.race = null;
+        } else {
+          r.timeLeft = Math.min(r.timeLeft + RACE_GATE_TIME, 30);
+          post('@race', '⏱ Gate ' + r.i + '/' + r.cps.length + ' — +' + RACE_GATE_TIME + 's');
+        }
+      }
+    }
+
     /* ===================== VIGILANTE / RAMPAGE ========================== */
     function makeBountyPed() {
       var p = roadNear(W.player.x, W.player.z, 40, 90) || randomRoad();
@@ -1087,6 +1140,7 @@
       // gameplay-loop reset
       W.popups = [];
       W.job = null; W.jobCombo = 0; W.jobsDone = 0;
+      W.race = null; W.raceLevel = 0; W.racesDone = 0;
       W.vigilante = null; W.vigilanteCd = 0; W.vigilanteLevel = 0; W.vigilanteIdle = 0; W.rampage = null; W.rampagesDone = 0; W.ownedZones = 0;
       W.ownedBiz = []; W.bizVault = []; W.bizClock = 0; W.heist = null; W.heistsDone = 0;
       W.weather = 'clear'; W.weatherTimer = rand(40, 90); W.timeOfDay = 0.3;
@@ -1096,6 +1150,7 @@
       placeShops();
       placeStores();
       placeDepots();
+      placeRaces();
       placeZones();
       placeBanks();
       placeBusinesses();
@@ -1925,7 +1980,7 @@
 
       if (W.state === 'wasted') {
         W.respawnTimer -= dt; ageFeed(dt);
-        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.roadblockCd = 0; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
+        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.roadblockCd = 0; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.race) { W.race = null; W.raceLevel = 0; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
         return;
       }
       if (W.player.hp <= 0) { wasted(); return; }
@@ -1936,7 +1991,7 @@
       if (input.buyPressed) tryOpenOrBuy();
       if (input.cyclePressed) cycleShop();
       if (input.safehousePressed) enterSafehouse();
-      if (input.jobPressed) acceptJob();
+      if (input.jobPressed) { if (!startRace()) acceptJob(); }  // J: race when in a car at a 🏁, else courier
       if (input.weaponSlot >= 0 && input.weaponSlot !== undefined) switchWeapon(WEAPON_ORDER[input.weaponSlot]);
       if (input.weaponCyclePressed) cycleWeapon(1);
       if (input.shoot) fireWeapon(input);
@@ -1949,6 +2004,7 @@
         if (d2(W.player.x, W.player.z, W.job.dropX, W.job.dropZ) < JOB_RADIUS * JOB_RADIUS) completeJob();
         else if (W.job.timeLeft <= 0) failJob('time');
       }
+      tickRace(dt);
       tickVigilante(dt);
       tickRampage(dt);
       tickZones(dt);
@@ -2007,6 +2063,7 @@
         hurtPlayer: hurtPlayer, buyItem: buyItem, shopCatalog: shopCatalog, nearestShop: nearestShop, nearestProperty: nearestProperty,
         robStore: robStore, enterSafehouse: enterSafehouse, enterShop: enterShop, enterHome: enterHome, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
         killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot, makeCopFoot: makeCopFoot,
+        startRace: startRace, failRace: failRace, nearestRaceStart: nearestRaceStart,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,
         WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed,

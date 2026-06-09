@@ -1118,7 +1118,58 @@ function run() {
     checkInvariants(se, 'skill-tree');
   })();
 
-  // 12) dt extremes
+  // 12) street races: J in a car at a flag starts a checkpoint sprint; gates add
+  //     time; winning pays + chains the level up; fails break the chain.
+  (function raceChecks() {
+    var re2 = GTA3D.createEngine(), RW = re2.world, RIN = re2._internal;
+    assert.ok(RW.raceStarts && RW.raceStarts.length >= 3, 'race starts placed');
+    RW.player.inCar = false; RW.playerCar = null;
+    RW.player.x = RW.raceStarts[0].x; RW.player.z = RW.raceStarts[0].z;
+    assert.ok(RIN.startRace() === false, 'no race on foot');
+    var car = RW.cars[0]; car.npc = null; car.driver = 'player';
+    car.x = RW.player.x; car.z = RW.player.z;
+    RW.player.inCar = true; RW.playerCar = car;
+    assert.ok(RIN.startRace() === true, 'race starts in a car at the flag');
+    assert.ok(RW.race && RW.race.cps.length === 4, 'level-1 course has 4 gates (' + RW.race.cps.length + ')');
+    assert.ok(RIN.startRace() === false, 'no second race mid-race');
+    var reward1 = RW.race.reward, m0 = RW.money, rep0 = RW.rep;
+    var guard = 0;
+    while (RW.race && guard++ < 20) {  // drive the course by teleporting gate to gate
+      var cp = RW.race.cps[RW.race.i];
+      RW.player.x = cp.x; RW.player.z = cp.z; car.x = cp.x; car.z = cp.z;
+      re2.step(1 / 60, {});
+    }
+    assert.ok(!RW.race, 'race completed');
+    assert.strictEqual(RW.racesDone, 1, 'win counted');
+    assert.strictEqual(RW.money, m0 + reward1, 'reward paid in full');
+    assert.ok(RW.rep > rep0, 'race pays rep');
+    assert.strictEqual(RW.raceLevel, 1, 'win sets the chain level');
+    // chain escalates: next race is longer and pays more
+    RW.player.x = RW.raceStarts[0].x; RW.player.z = RW.raceStarts[0].z;
+    car.x = RW.player.x; car.z = RW.player.z;
+    assert.ok(RIN.startRace() === true, 'second race starts');
+    assert.ok(RW.race.level === 2 && RW.race.cps.length === 5, 'chain escalates the course');
+    // timeout fails the race and breaks the chain
+    RW.race.timeLeft = 0.001;
+    re2.step(1 / 60, {});
+    assert.ok(!RW.race, 'timeout ends the race');
+    assert.strictEqual(RW.raceLevel, 0, 'fail breaks the chain');
+    // leaving the car too long fails the race
+    RW.player.x = RW.raceStarts[0].x; RW.player.z = RW.raceStarts[0].z;
+    car.x = RW.player.x; car.z = RW.player.z;
+    assert.ok(RIN.startRace() === true, 'third race starts');
+    RW.player.inCar = false; RW.playerCar = null; car.driver = null;
+    for (var bs = 0; bs < 60 * 8 && RW.race; bs++) re2.step(1 / 60, {});
+    assert.ok(!RW.race, 'abandoning the car fails the race');
+    // races persist in saves
+    RW.racesDone = 3; RW.raceLevel = 2;
+    var rsave = RIN.serializeSave();
+    var re3 = GTA3D.createEngine(); re3._internal.applySave(rsave);
+    assert.ok(re3.world.racesDone === 3 && re3.world.raceLevel === 2, 'race progress survives save/load');
+    checkInvariants(re2, 'street-race');
+  })();
+
+  // 13) dt extremes
   eng.step(0, {}); eng.step(0.1, {}); checkInvariants(eng, 'dt-extreme');
 
   console.log('PASS — ' + total + ' steps simulated with no errors.');

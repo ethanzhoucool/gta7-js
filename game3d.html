@@ -137,7 +137,7 @@
   <div id="shop" class="ui"></div>
   <div id="banner" class="ui"></div>
   <canvas id="mini" class="ui" width="170" height="170"></canvas>
-  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · <b>J job · K skills · 1-4/Q weapon</b></div>
+  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · <b>J job/race · K skills · 1-4/Q weapon</b></div>
   <div id="touchUI">
     <div id="tStickBase"></div>
     <div id="tStickKnob"></div>
@@ -2697,8 +2697,19 @@
       for (i = 0; i < W.stores.length; i++) addBeacon(W.stores[i].x, W.stores[i].z, 0xffd23f, 4.5);
       if (W.propPos) for (i = 0; i < W.propPos.length; i++) addBeacon(W.propPos[i].x, W.propPos[i].z, 0x6bf08a, 6);
       for (i = 0; i < W.jobDepots.length; i++) addBeacon(W.jobDepots[i].x, W.jobDepots[i].z, 0x39d3c0, 8);   // courier depots (teal)
+      if (W.raceStarts) for (i = 0; i < W.raceStarts.length; i++) addBeacon(W.raceStarts[i].x, W.raceStarts[i].z, 0xf5f5f5, 8); // race flags (white)
       for (i = 0; i < W.zones.length; i++) addBeacon(W.zones[i].x, W.zones[i].z, 0x6a0d3a, 9);               // gang turf (magenta)
       for (i = 0; i < W.businesses.length; i++) addBeacon(W.businesses[i].x, W.businesses[i].z, 0xC9A227, 6); // buyable businesses (gold)
+    })();
+
+    // reusable race-checkpoint marker (cyan), repositioned to the current gate each frame
+    var raceMarker = (function () {
+      var g = new THREE.Group();
+      var pillar = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 18, 10), new THREE.MeshBasicMaterial({ color: 0x39c2ff, transparent: true, opacity: 0.4, fog: false, toneMapped: false }));
+      pillar.position.y = 9; g.add(pillar);
+      var ring = new THREE.Mesh(new THREE.TorusGeometry(4.5, 0.35, 8, 24), new THREE.MeshBasicMaterial({ color: 0x39c2ff, fog: false, toneMapped: false }));
+      ring.rotation.x = Math.PI / 2; ring.position.y = 1.2; g.add(ring);
+      g.visible = false; scene.add(g); return g;
     })();
 
     // reusable bright-green getaway marker, shown only during a heist escape (repositioned each frame)
@@ -3287,7 +3298,11 @@
         if (IN.nearestProperty(6) >= 0) pr = (pr ? pr + '   ' : '') + '[H] Lie low (safehouse)';
         if (!W.job && IN.nearestDepot(6.5)) pr = (pr ? pr + '   ' : '') + '[J] Courier job';
         if (!W.heist && IN.nearestBank && IN.nearestBank(7)) pr = '[E] Rob the bank 🏦';   // big-score prompt (E = rob)
-      } else { pr = '[F] Exit vehicle'; if (!W.job && IN.nearestDepot(6.5)) pr += '   [J] Courier job'; }
+      } else {
+        pr = '[F] Exit vehicle';
+        if (!W.race && IN.nearestRaceStart && IN.nearestRaceStart(9)) pr += '   [J] Street race 🏁';
+        else if (!W.job && IN.nearestDepot(6.5)) pr += '   [J] Courier job';
+      }
       elPrompt.textContent = pr; elPrompt.style.display = pr ? 'block' : 'none';
 
       // buy menu
@@ -3308,6 +3323,7 @@
       var gtxt = '';
       if (W.heist && W.heist.stage === 'rob') gtxt = '🏦 Cracking the vault… ' + Math.min(100, Math.round(W.heist.crack / 5.0 * 100)) + '%';
       else if (W.heist && W.heist.stage === 'escape') gtxt = '🏃 Escape with $' + W.heist.reward + ' — reach the getaway!';
+      else if (W.race) gtxt = '🏁 Gate ' + (W.race.i + 1) + '/' + W.race.cps.length + ' — $' + W.race.reward + '  ' + Math.max(0, Math.ceil(W.race.timeLeft)) + 's' + (W.race.level > 1 ? '  #' + W.race.level : '');
       else if (W.job) gtxt = '📦 Deliver — $' + W.job.base + '  ' + Math.max(0, Math.ceil(W.job.timeLeft)) + 's' + (W.jobCombo > 1 ? '  x' + W.jobCombo : '');
       else if (W.rampage) gtxt = '🔫 RAMPAGE ' + (W.kills - W.rampage.kills0) + '/' + W.rampage.target + '  ' + Math.max(0, Math.ceil(W.rampage.timeLeft)) + 's';
       else if (W.vigilante) gtxt = '🎯 Hunt the fugitive — $' + W.vigilante.reward;
@@ -3372,6 +3388,7 @@
       mctx.fillStyle = '#C9A227'; for (i = 0; i < W.banks.length; i++) mctx.fillRect(W.banks[i].x * sc - 3, W.banks[i].z * sc - 3, 6, 6);
       mctx.fillStyle = '#e8c24a'; for (i = 0; i < W.businesses.length; i++) mctx.fillRect(W.businesses[i].x * sc - 2, W.businesses[i].z * sc - 2, 4, 4);
       if (W.heist && W.heist.stage === 'escape') { mctx.fillStyle = '#39d353'; mctx.beginPath(); mctx.arc(W.heist.dropX * sc, W.heist.dropZ * sc, 5, 0, 7); mctx.fill(); }
+      if (W.race) { var rmc = W.race.cps[W.race.i]; mctx.fillStyle = '#39c2ff'; mctx.beginPath(); mctx.arc(rmc.x * sc, rmc.z * sc, 5, 0, 7); mctx.fill(); }
       mctx.fillStyle = '#3a7bff'; for (i = 0; i < W.police.length; i++) mctx.fillRect(W.police[i].x * sc - 2, W.police[i].z * sc - 2, 4, 4);
       mctx.fillStyle = '#ffd23f'; mctx.fillRect(W.player.x * sc - 2.5, W.player.z * sc - 2.5, 5, 5);
     }
@@ -3884,6 +3901,12 @@
       for (var bi = 0; bi < beacons.length; bi++) beacons[bi]._orb.position.y = (beacons[bi].children[0].geometry.parameters.height) + 0.6 + Math.sin(W.time * 2 + bi) * 0.4;
       if (W.heist && W.heist.stage === 'escape') { heistMarker.visible = true; heistMarker.position.set(W.heist.dropX, 0, W.heist.dropZ); heistMarker.children[1].position.y = 16.8 + Math.sin(W.time * 3) * 0.5; }
       else if (heistMarker.visible) heistMarker.visible = false;
+      if (W.race) {
+        var rcp = W.race.cps[W.race.i];
+        raceMarker.visible = true; raceMarker.position.set(rcp.x, 0, rcp.z);
+        raceMarker.children[1].position.y = 1.2 + Math.sin(W.time * 4) * 0.4;          // pulsing gate ring
+        raceMarker.children[1].rotation.z = W.time * 1.5;
+      } else if (raceMarker.visible) raceMarker.visible = false;
       updateHUD();
       if (wheelOpen) drawWeaponWheel();
       if (gameStarted && menuEl && menuEl.style.display !== 'none') menuEl.style.display = 'none';
