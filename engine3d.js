@@ -696,6 +696,7 @@
         { id: 'fivestar', label: 'Reach a 5-star wanted level', done: false, test: function () { return W.wanted >= 5; }, reward: 1000 },
         { id: 'rampage', label: 'Take down 15 targets', done: false, test: function () { return W.kills >= 15; }, reward: 750 },
         { id: 'race3', label: 'Win 3 street races', done: false, test: function () { return (W.racesDone || 0) >= 3; }, reward: 600 },
+        { id: 'pack12', label: 'Find the 12 hidden packages', done: false, test: function () { return (W.packagesFound || 0) >= 12; }, reward: 1000 },
         { id: 'tycoon', label: 'Reach $50,000 net worth', done: false, test: function () { return W.netWorth >= 50000; }, reward: 5000 }
       ];
     }
@@ -737,6 +738,7 @@
       return {
         v: 1, money: W.money, kills: W.kills, jobsDone: W.jobsDone, rampagesDone: W.rampagesDone, heistsDone: W.heistsDone,
         racesDone: W.racesDone | 0, raceLevel: W.raceLevel | 0,
+        packagesGot: W.packages.map(function (pk) { return !!pk.got; }),
         ownedCarTier: W.ownedCarTier, carMods: { engine: W.carMods.engine, top: W.carMods.top, grip: W.carMods.grip, turn: W.carMods.turn, paint: W.carMods.paint },
         ownedProps: W.ownedProps.slice(), homePropIndex: W.homePropIndex,
         ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
@@ -750,6 +752,8 @@
       if (!s || typeof s !== 'object') return false;
       W.money = s.money | 0; W.kills = s.kills | 0; W.jobsDone = s.jobsDone | 0; W.rampagesDone = s.rampagesDone | 0; W.heistsDone = s.heistsDone | 0;
       W.racesDone = s.racesDone | 0; W.raceLevel = s.raceLevel | 0;
+      if (s.packagesGot) { W.packagesFound = 0;  // placement is deterministic → restore by index
+        for (var pgi = 0; pgi < W.packages.length; pgi++) if (s.packagesGot[pgi]) { W.packages[pgi].got = true; W.packagesFound++; } }
       W.ownedCarTier = s.ownedCarTier | 0; W.ownedProps = (s.ownedProps || []).slice(); W.homePropIndex = (s.homePropIndex == null ? null : (s.homePropIndex | 0));
       W.ownedBiz = (s.ownedBiz || []).slice(); W.bizVault = (s.bizVault || []).slice();
       if (s.carMods) { W.carMods.engine = s.carMods.engine || 1; W.carMods.top = s.carMods.top || 1; W.carMods.grip = s.carMods.grip || 1; W.carMods.turn = s.carMods.turn || 1; W.carMods.paint = (s.carMods.paint == null ? null : s.carMods.paint); }
@@ -952,6 +956,42 @@
     }
     function failJob(reason) { if (!W.job) return false; var hadStreak = W.jobCombo; W.jobCombo = 0; W.job = null; post('@Dispatch', '❌ Fare lost (' + reason + ').' + (hadStreak > 2 ? ' Streak of ' + hadStreak + ' broken!' : '')); return true; }
 
+    /* ----- hidden packages: 12 collectibles tucked into parks/corners off the road.
+     * Deterministic placement (hash-ranked park tiles, min-gap spread) so saves can
+     * restore found-flags by index. Walking/driving over one collects it; finding
+     * all 12 is a permanent +50 max HP unlock. ----- */
+    var PACKAGE_COUNT = 12, PACKAGE_CASH = 250, PACKAGE_MIN_GAP = 120;
+    function placePackages() {
+      W.packages = []; W.packagesFound = 0;
+      var cands = [];
+      for (var tz = WATER_MARGIN; tz < MAP - 2; tz++) for (var tx = WATER_MARGIN; tx < MAP - WATER_MARGIN - 1; tx++) {
+        if (tileType(tx, tz) !== T_PARK) continue;
+        cands.push({ tx: tx, tz: tz, s: hash2(tx * 3 + 1, tz * 7 + 2) });
+      }
+      cands.sort(function (a, b) { return b.s - a.s; });
+      for (var i = 0; i < cands.length && W.packages.length < PACKAGE_COUNT; i++) {
+        var c = cands[i], px = c.tx * TILE + TILE / 2, pz = c.tz * TILE + TILE / 2, ok = true;
+        // nudge onto the tile's sidewalk ring toward an adjacent road — clear of the
+        // tree cluster at the center, glimpsable from the street
+        if (tileType(c.tx, c.tz - 1) === T_ROAD) pz -= TILE / 2 - 1.6;
+        else if (tileType(c.tx, c.tz + 1) === T_ROAD) pz += TILE / 2 - 1.6;
+        else if (tileType(c.tx - 1, c.tz) === T_ROAD) px -= TILE / 2 - 1.6;
+        else if (tileType(c.tx + 1, c.tz) === T_ROAD) px += TILE / 2 - 1.6;
+        for (var j = 0; j < W.packages.length; j++) if (d2(px, pz, W.packages[j].x, W.packages[j].z) < PACKAGE_MIN_GAP * PACKAGE_MIN_GAP) { ok = false; break; }
+        if (ok) W.packages.push({ x: px, z: pz, got: false, id: (W._id = (W._id || 0) + 1) });
+      }
+    }
+    function tickPackages() {
+      for (var i = 0; i < W.packages.length; i++) { var pk = W.packages[i];
+        if (pk.got || d2(pk.x, pk.z, W.player.x, W.player.z) > 2.8 * 2.8) continue;
+        pk.got = true; W.packagesFound++;
+        W.money += PACKAGE_CASH; popCash(PACKAGE_CASH, pk.x, pk.z); addRep(15);
+        post('@you', '📦 Hidden package ' + W.packagesFound + '/' + W.packages.length + ' (+$' + PACKAGE_CASH + ')');
+        if (W.packagesFound >= W.packages.length)
+          unlock('packageKing', 'Every package found — +50 max HP, forever.', function () { W.player.maxHp += 50; W.player.hp = W.player.maxHp; });
+      }
+    }
+
     /* ----- street races: checkpoint sprints (J while in a car at a 🏁 start) -----
      * Same chain economics as the vigilante loop: each consecutive WIN raises the
      * level — longer course, bigger purse — and any fail breaks the chain back to 1.
@@ -1151,6 +1191,7 @@
       placeStores();
       placeDepots();
       placeRaces();
+      placePackages();
       placeZones();
       placeBanks();
       placeBusinesses();
@@ -2005,6 +2046,7 @@
         else if (W.job.timeLeft <= 0) failJob('time');
       }
       tickRace(dt);
+      tickPackages();
       tickVigilante(dt);
       tickRampage(dt);
       tickZones(dt);

@@ -2702,6 +2702,19 @@
       for (i = 0; i < W.businesses.length; i++) addBeacon(W.businesses[i].x, W.businesses[i].z, 0xC9A227, 6); // buyable businesses (gold)
     })();
 
+    // hidden packages: small spinning gold cubes (no minimap dot — they're hidden)
+    var packMeshes = [];
+    (function placePackageMeshes() {
+      if (!W.packages) return;
+      var geo = new THREE.BoxGeometry(0.55, 0.55, 0.55);
+      var mat = new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xcf8a0a, emissiveIntensity: 0.7, metalness: 0.65, roughness: 0.25 });
+      for (var i = 0; i < W.packages.length; i++) {
+        var m = new THREE.Mesh(geo, mat);
+        m.position.set(W.packages[i].x, 1, W.packages[i].z);
+        scene.add(m); packMeshes.push(m);
+      }
+    })();
+
     // reusable race-checkpoint marker (cyan), repositioned to the current gate each frame
     var raceMarker = (function () {
       var g = new THREE.Group();
@@ -3907,6 +3920,11 @@
         raceMarker.children[1].position.y = 1.2 + Math.sin(W.time * 4) * 0.4;          // pulsing gate ring
         raceMarker.children[1].rotation.z = W.time * 1.5;
       } else if (raceMarker.visible) raceMarker.visible = false;
+      for (var pmi = 0; pmi < packMeshes.length; pmi++) {
+        var pm = packMeshes[pmi], pkd = W.packages[pmi];
+        pm.visible = !!pkd && !pkd.got && !W.interior;
+        if (pm.visible) { pm.rotation.y = W.time * 2; pm.position.y = 1 + Math.sin(W.time * 2 + pmi) * 0.25; }
+      }
       updateHUD();
       if (wheelOpen) drawWeaponWheel();
       if (gameStarted && menuEl && menuEl.style.display !== 'none') menuEl.style.display = 'none';

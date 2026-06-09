@@ -1169,7 +1169,51 @@ function run() {
     checkInvariants(re2, 'street-race');
   })();
 
-  // 13) dt extremes
+  // 13) hidden packages: deterministic spread placement on park tiles, collect pays
+  //     cash + rep, all-12 grants the permanent max-HP unlock, found-flags persist.
+  (function packageChecks() {
+    var pe = GTA3D.createEngine(), PW = pe.world, PIN = pe._internal;
+    assert.strictEqual(PW.packages.length, 12, '12 packages placed');
+    var pe2 = GTA3D.createEngine();
+    for (var di = 0; di < 12; di++) {
+      assert.ok(PW.packages[di].x === pe2.world.packages[di].x && PW.packages[di].z === pe2.world.packages[di].z, 'placement is deterministic (#' + di + ')');
+      for (var dj = di + 1; dj < 12; dj++) {
+        var dd = Math.hypot(PW.packages[di].x - PW.packages[dj].x, PW.packages[di].z - PW.packages[dj].z);
+        assert.ok(dd >= 120, 'packages spread out (' + di + ',' + dj + ' = ' + dd.toFixed(0) + 'u)');
+      }
+    }
+    // collect one: walk onto it
+    var m0 = PW.money, rep0 = PW.rep;
+    PW.player.inCar = false; PW.player.x = PW.packages[0].x; PW.player.z = PW.packages[0].z;
+    pe.step(1 / 60, {});
+    assert.ok(PW.packages[0].got && PW.packagesFound === 1, 'package collects on touch');
+    assert.strictEqual(PW.money, m0 + 250, 'package pays $250');
+    assert.ok(PW.rep > rep0, 'package pays rep');
+    pe.step(1 / 60, {});
+    assert.strictEqual(PW.packagesFound, 1, 'no double-collect');
+    // collect the rest → permanent unlock
+    var hp0 = PW.player.maxHp;
+    for (var ci = 1; ci < 12; ci++) {
+      PW.player.x = PW.packages[ci].x; PW.player.z = PW.packages[ci].z;
+      pe.step(1 / 60, {});
+    }
+    assert.strictEqual(PW.packagesFound, 12, 'all 12 collected');
+    assert.ok(PW.milestones.packageKing, 'package king milestone unlocked');
+    assert.strictEqual(PW.player.maxHp, hp0 + 50, 'all-12 grants +50 max HP');
+    // found-flags survive save/load (maxHp rides the player save block)
+    var psave = PIN.serializeSave();
+    var pe3 = GTA3D.createEngine(); pe3._internal.applySave(psave);
+    assert.strictEqual(pe3.world.packagesFound, 12, 'found-flags survive save/load');
+    assert.ok(pe3.world.packages.every(function (pk) { return pk.got; }), 'every package stays found');
+    assert.strictEqual(pe3.world.player.maxHp, hp0 + 50, 'package max-HP bonus survives save/load');
+    // old saves (no package field) load with everything unfound
+    delete psave.packagesGot;
+    var pe4 = GTA3D.createEngine(); pe4._internal.applySave(psave);
+    assert.strictEqual(pe4.world.packagesFound, 0, 'pre-package saves start unfound');
+    checkInvariants(pe, 'packages');
+  })();
+
+  // 14) dt extremes
   eng.step(0, {}); eng.step(0.1, {}); checkInvariants(eng, 'dt-extreme');
 
   console.log('PASS — ' + total + ' steps simulated with no errors.');
