@@ -203,6 +203,7 @@
       job: null, jobCombo: 0, jobsDone: 0, jobDepots: [], // courier/taxi fares
       race: null, raceLevel: 0, racesDone: 0, raceStarts: [], // checkpoint street races (J in a car at a 🏁)
       vigilante: null, vigilanteCd: 0,                    // bounty-hunt loop
+      event: null, eventCd: 0,                            // ambient street events (mugging in progress, etc.)
       rampage: null, rampagePads: [],                     // kill-streak challenge
       zones: [], ownedZones: 0,                           // gang turf
       banks: [], heist: null, heistsDone: 0,              // bank-heist loop (the big score)
@@ -998,6 +999,76 @@
       }
     }
 
+    /* ----- street events: a mugging in progress — save the victim for cash + rep.
+     * Spawns 30–120s apart whenever the player is calm (no heat, not in an interior,
+     * not mid-race/heist). The mugger turns hostile when you get close; the victim
+     * slow-drains HP until you intervene or the 30s clock runs out. ----- */
+    var EVENT_TIME = 30, EVENT_DRAIN = 2.5;
+    function startStreetEvent() {
+      if (W.event || W.wanted > 0 || W.interior || W.race || W.heist) return false;
+      var pt = roadNear(W.player.x, W.player.z, 30, 70); if (!pt) return false;
+      var victim = makePed(pt.x, pt.z, false);
+      victim.eventVictim = true;
+      victim.speed = 0; victim.think = 9999; // keep the victim standing still while event is active
+      W.peds.push(victim);
+      var mugger = makePed(pt.x + 1.4, pt.z + 0.8, true);
+      mugger.mugger = true; mugger.hostile = false; mugger.color = 0x7a1f1f; mugger.hp = 70;
+      mugger.speed = 0; mugger.think = 9999; // mugger loiters at the scene
+      W.peds.push(mugger);
+      W.event = { type: 'mugging', x: pt.x, z: pt.z, muggerId: mugger.id, victimId: victim.id, timeLeft: EVENT_TIME };
+      post('@city', '🚨 Someone is getting jumped in ' + districtName(pt.x, pt.z) + ' — help them!');
+      return true;
+    }
+    function endStreetEvent(success) {
+      var ev = W.event; if (!ev) return;
+      var mugger = findPedById(ev.muggerId), victim = findPedById(ev.victimId);
+      if (mugger && mugger.alive) { mugger.hostile = false; mugger.panic = 4; }
+      if (victim && victim.alive) { victim.eventVictim = false; victim.panic = 5; victim.think = rand(1, 3); }
+      W.event = null; W.eventCd = rand(60, 120);
+    }
+    function tickStreetEvent(dt) {
+      if (!W.event) {
+        W.eventCd -= dt;
+        if (W.eventCd <= 0 && (W.time % 1) < dt) {
+          startStreetEvent();
+          if (!W.event) W.eventCd = 20; // conditions failed (bad spawn etc.) — retry in 20s
+        }
+        return;
+      }
+      var ev = W.event;
+      var mugger = findPedById(ev.muggerId);
+      var victim = findPedById(ev.victimId);
+      ev.timeLeft -= dt;
+      // pin victim in place while the event is active (re-anchor each tick so wander can't drift it)
+      if (victim && victim.alive) { victim.x = lerp(victim.x, ev.x, Math.min(1, dt * 4)); victim.z = lerp(victim.z, ev.z, Math.min(1, dt * 4)); victim.speed = 0; }
+      // pin mugger nearby too
+      if (mugger && mugger.alive && !mugger.hostile) { mugger.x = lerp(mugger.x, ev.x + 1.4, Math.min(1, dt * 4)); mugger.z = lerp(mugger.z, ev.z + 0.8, Math.min(1, dt * 4)); mugger.speed = 0; }
+      // aggro: mugger turns on the player when they get close
+      if (mugger && mugger.alive && !mugger.hostile && dist(W.player.x, W.player.z, ev.x, ev.z) < 20) {
+        mugger.hostile = true;
+      }
+      // SUCCESS: mugger dead/missing AND victim alive
+      if ((!mugger || !mugger.alive) && victim && victim.alive) {
+        var r = randInt(120, 200);
+        W.money += r; popCash(r, ev.x, ev.z); addRep(10);
+        post('@you', '🦸 Saved them! +$' + r + ' and the streets remember.');
+        endStreetEvent(true);
+        return;
+      }
+      // FAIL: victim dead/missing OR time ran out
+      if (!victim || !victim.alive || ev.timeLeft <= 0) {
+        var vAlive = !!(victim && victim.alive);
+        post('@city', '… the mugging ' + (vAlive ? 'broke up' : 'turned ugly') + '.');
+        endStreetEvent(false);
+        return;
+      }
+      // drain the victim HP slowly
+      if (victim && victim.alive) {
+        victim.hp -= EVENT_DRAIN * dt;
+        if (victim.hp <= 0) killPed(victim, false);
+      }
+    }
+
     /* ----- hidden packages: 12 collectibles tucked into parks/corners off the road.
      * Deterministic placement (hash-ranked park tiles, min-gap spread) so saves can
      * restore found-flags by index. Walking/driving over one collects it; finding
@@ -1223,6 +1294,7 @@
       W.popups = [];
       W.job = null; W.jobCombo = 0; W.jobsDone = 0;
       W.race = null; W.raceLevel = 0; W.racesDone = 0;
+      W.event = null; W.eventCd = rand(30, 60);
       W.vigilante = null; W.vigilanteCd = 0; W.vigilanteLevel = 0; W.vigilanteIdle = 0; W.rampage = null; W.rampagesDone = 0; W.ownedZones = 0;
       W.ownedBiz = []; W.bizVault = []; W.bizClock = 0; W.heist = null; W.heistsDone = 0;
       W.weather = 'clear'; W.weatherTimer = rand(40, 90); W.timeOfDay = 0.3;
@@ -1505,7 +1577,7 @@
     }
 
     /* ----- peds ----- */
-    function respawnPed(p) { var r = randomRoad(); p.x = r.x; p.z = r.z; p.alive = true; p.cop = false; p.swat = false; p.bounty = false; p.gang = undefined; p.fireCd = 0; p.strafeSign = 1; p.strafeFlip = 0; p.hp = p.tough ? 60 : 30; p.panic = 0; p.stun = 0; p.launchVx = 0; p.launchVz = 0; p.deadTimer = 0; p.witness = false; p.reportTimer = 0; p.hostile = false; p.dir = snapCardinal(rand(0, TWO_PI)); p.yaw = p.dir; p.speed = 0; p.think = rand(0.4, 2); }
+    function respawnPed(p) { var r = randomRoad(); p.x = r.x; p.z = r.z; p.alive = true; p.cop = false; p.swat = false; p.bounty = false; p.gang = undefined; p.mugger = false; p.eventVictim = false; p.fireCd = 0; p.strafeSign = 1; p.strafeFlip = 0; p.hp = p.tough ? 60 : 30; p.panic = 0; p.stun = 0; p.launchVx = 0; p.launchVz = 0; p.deadTimer = 0; p.witness = false; p.reportTimer = 0; p.hostile = false; p.dir = snapCardinal(rand(0, TWO_PI)); p.yaw = p.dir; p.speed = 0; p.think = rand(0.4, 2); }
     // Foot officer: face the suspect, hold a standoff (advance/retreat/strafe), and fire flat.
     function updateCopFoot(p, dt) {
       if (p.stun > 0) { p.stun -= dt; p.speed = 0; if (p.stun > 0) return; }
@@ -1642,6 +1714,7 @@
       if (p.cop) { if (byPlayer) { W.kills++; W.money += randInt(15, 40); } return; }
       if (p.bounty) { if (byPlayer) { W.kills++; W.money += randInt(10, 30); } return; }
       if (p.gang !== undefined) { if (byPlayer) { W.kills++; W.money += randInt(10, 35); } return; }
+      if (p.mugger) { if (byPlayer) { W.kills++; W.money += randInt(20, 50); } return; } // killing a mugger draws no heat
       if (byPlayer) { W.kills++; W.money += randInt(5, 25); if (wasW) post('@you', '🤫 Silenced a witness.'); commitCrime(CRIME.MURDER, p.x, p.z); }
     }
 
@@ -2064,7 +2137,7 @@
 
       if (W.state === 'wasted') {
         W.respawnTimer -= dt; ageFeed(dt);
-        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.roadblockCd = 0; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.race) { W.race = null; W.raceLevel = 0; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
+        if (W.respawnTimer <= 0) { W.state = 'play'; W.money = Math.max(0, W.money - 100); W.wanted = 0; W.lkpValid = false; W.seen = false; W.police = []; W.helis = []; W.roadblockCd = 0; W.bullets = []; clearFootCops(true); W.currentShop = null; W.shopIndex = 0; W.player.armor = 0; if (W.job) { W.jobCombo = 0; W.job = null; } if (W.race) { W.race = null; W.raceLevel = 0; } if (W.event) { var _em = findPedById(W.event.muggerId), _ev2 = findPedById(W.event.victimId); if (_em && _em.alive) { _em.mugger = false; _em.hostile = false; } if (_ev2 && _ev2.alive) { _ev2.eventVictim = false; } W.event = null; W.eventCd = 60; } if (W.heist) { var _hl = W.heist.stage === 'escape'; W.heist = null; post('@you', _hl ? 'Busted — lost the score.' : 'Vault job blown — you died on the crack.'); } var _hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : (W.ownedProps.length ? W.ownedProps[0] : -1); var _atHome = (_hi >= 0 && W.propPos && W.propPos[_hi]); var pr = _atHome ? { x: W.propPos[_hi].x, z: W.propPos[_hi].z } : randomRoad(); W.player.x = pr.x; W.player.z = pr.z; W.player.hp = W.player.maxHp; W.player.y = 0; W.player.vy = 0; W.player.inCar = false; W.playerCar = null; W.player.barBuff = 0; post('@you', _atHome ? ('Back home at ' + PROPERTY_DEFS[_hi].name + ', $100 lighter.') : 'Out of the hospital, $100 lighter.'); }
         return;
       }
       if (W.player.hp <= 0) { wasted(); return; }
@@ -2091,6 +2164,7 @@
       tickRace(dt);
       tickPackages();
       tickBribes(dt);
+      tickStreetEvent(dt);
       tickVigilante(dt);
       tickRampage(dt);
       tickZones(dt);
@@ -2151,6 +2225,7 @@
         killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot, makeCopFoot: makeCopFoot,
         startRace: startRace, failRace: failRace, nearestRaceStart: nearestRaceStart,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,
+        startStreetEvent: startStreetEvent, endStreetEvent: endStreetEvent,
         giveWeapon: giveWeapon, switchWeapon: switchWeapon, cycleWeapon: cycleWeapon, currentWeaponDef: currentWeaponDef,
         WEAPON_DEFS: WEAPON_DEFS, WEAPON_ORDER: WEAPON_ORDER, zoneAt: zoneAt, makeGangPed: makeGangPed,
         startHeist: startHeist, tickHeist: tickHeist, nearestBank: nearestBank, collectBusiness: collectBusiness,

@@ -2748,6 +2748,16 @@
       g.visible = false; scene.add(g); return g;
     })();
 
+    // reusable red danger marker, shown at the mugging-in-progress location
+    var eventMarker = (function () {
+      var g = new THREE.Group();
+      var pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 14, 10), new THREE.MeshBasicMaterial({ color: 0xff4a4a, transparent: true, opacity: 0.35, fog: false, toneMapped: false }));
+      pillar.position.y = 7; g.add(pillar);
+      var orb = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff4a4a, fog: false, toneMapped: false }));
+      orb.position.y = 7; g.add(orb);
+      g.visible = false; scene.add(g); return g;
+    })();
+
     // pools
     var carPool = [], pedPool = [], policePool = [], bulletPool = [], pickupPool = [], fxPool = [], heliPool = [];
     function heliMesh() {
@@ -3350,6 +3360,7 @@
       if (W.heist && W.heist.stage === 'rob') gtxt = '🏦 Cracking the vault… ' + Math.min(100, Math.round(W.heist.crack / 5.0 * 100)) + '%';
       else if (W.heist && W.heist.stage === 'escape') gtxt = '🏃 Escape with $' + W.heist.reward + ' — reach the getaway!';
       else if (W.race) gtxt = '🏁 Gate ' + (W.race.i + 1) + '/' + W.race.cps.length + ' — $' + W.race.reward + '  ' + Math.max(0, Math.ceil(W.race.timeLeft)) + 's' + (W.race.level > 1 ? '  #' + W.race.level : '');
+      else if (W.event) gtxt = '🚨 Mugging in progress — drop the attacker! ' + Math.max(0, Math.ceil(W.event.timeLeft)) + 's';
       else if (W.job) gtxt = '📦 Deliver — $' + W.job.base + '  ' + Math.max(0, Math.ceil(W.job.timeLeft)) + 's' + (W.jobCombo > 1 ? '  x' + W.jobCombo : '');
       else if (W.rampage) gtxt = '🔫 RAMPAGE ' + (W.kills - W.rampage.kills0) + '/' + W.rampage.target + '  ' + Math.max(0, Math.ceil(W.rampage.timeLeft)) + 's';
       else if (W.vigilante) gtxt = '🎯 Hunt the fugitive — $' + W.vigilante.reward;
@@ -3415,6 +3426,7 @@
       mctx.fillStyle = '#e8c24a'; for (i = 0; i < W.businesses.length; i++) mctx.fillRect(W.businesses[i].x * sc - 2, W.businesses[i].z * sc - 2, 4, 4);
       if (W.heist && W.heist.stage === 'escape') { mctx.fillStyle = '#39d353'; mctx.beginPath(); mctx.arc(W.heist.dropX * sc, W.heist.dropZ * sc, 5, 0, 7); mctx.fill(); }
       if (W.race) { var rmc = W.race.cps[W.race.i]; mctx.fillStyle = '#39c2ff'; mctx.beginPath(); mctx.arc(rmc.x * sc, rmc.z * sc, 5, 0, 7); mctx.fill(); }
+      if (W.event) { mctx.fillStyle = '#ff4a4a'; mctx.beginPath(); mctx.arc(W.event.x * sc, W.event.z * sc, 4 + Math.sin(W.time * 6) * 1.5, 0, 7); mctx.fill(); }
       mctx.fillStyle = '#3a7bff'; for (i = 0; i < W.police.length; i++) mctx.fillRect(W.police[i].x * sc - 2, W.police[i].z * sc - 2, 4, 4);
       mctx.fillStyle = '#ffd23f'; mctx.fillRect(W.player.x * sc - 2.5, W.player.z * sc - 2.5, 5, 5);
     }
@@ -3933,6 +3945,8 @@
         raceMarker.children[1].position.y = 1.2 + Math.sin(W.time * 4) * 0.4;          // pulsing gate ring
         raceMarker.children[1].rotation.z = W.time * 1.5;
       } else if (raceMarker.visible) raceMarker.visible = false;
+      if (W.event) { eventMarker.visible = true; eventMarker.position.set(W.event.x, 0, W.event.z); }
+      else if (eventMarker.visible) eventMarker.visible = false;
       for (var pmi = 0; pmi < packMeshes.length; pmi++) {
         var pm = packMeshes[pmi], pkd = W.packages[pmi];
         pm.visible = !!pkd && !pkd.got && !W.interior;

@@ -1256,7 +1256,63 @@ function run() {
     checkInvariants(be, 'bribes');
   })();
 
-  // 15) dt extremes
+  // 15) street events: mugging in progress — spawn conditions, success, timeout, victim-death paths.
+  (function streetEventChecks() {
+    var se = GTA3D.createEngine(), SW = se.world, IN = se._internal;
+
+    // blocked while wanted
+    SW.wanted = 1;
+    assert.ok(IN.startStreetEvent() === false, 'startStreetEvent blocked while wanted > 0');
+    SW.wanted = 0;
+
+    // spawns when calm
+    assert.ok(IN.startStreetEvent() === true, 'startStreetEvent succeeds when calm');
+    assert.ok(SW.event && SW.event.type === 'mugging', 'W.event set with type mugging');
+    var mugger0 = null, victim0 = null;
+    for (var pi = 0; pi < SW.peds.length; pi++) { if (SW.peds[pi].mugger) mugger0 = SW.peds[pi]; if (SW.peds[pi].eventVictim) victim0 = SW.peds[pi]; }
+    assert.ok(mugger0 && mugger0.alive, 'mugger ped in W.peds with .mugger flag');
+    assert.ok(victim0 && victim0.alive, 'victim ped in W.peds with .eventVictim flag');
+
+    // SUCCESS path: kill the mugger, step once, event clears, money+rep rise, no heat
+    var m0 = SW.money, rep0 = SW.rep;
+    SW.wanted = 0;
+    IN.killPed(mugger0, true);
+    se.step(1 / 60, {});
+    assert.ok(SW.event === null, 'event clears after mugger is killed (success)');
+    assert.ok(SW.money >= m0 + 140, 'success path pays >=120 (event) + 20 (kill) = >=140 (got ' + (SW.money - m0) + ')');
+    assert.ok(SW.rep > rep0, 'success path pays rep');
+    assert.strictEqual(SW.wanted, 0, 'killing a mugger draws no heat (wanted stayed 0)');
+
+    // TIMEOUT path: start another event directly (eventCd already set from endStreetEvent, but direct call bypasses it)
+    assert.ok(IN.startStreetEvent() === true, 'can start another event directly');
+    assert.ok(SW.event, 'second event spawned');
+    var m1 = SW.money;
+    SW.event.timeLeft = 0.001;
+    se.step(1 / 60, {});
+    assert.ok(SW.event === null, 'event clears on timeout');
+    assert.ok(SW.money === m1, 'timeout path pays nothing (money unchanged, was ' + m1 + ')');
+    // mugger should not be hostile after event ends via timeout
+    for (var qi = 0; qi < SW.peds.length; qi++) {
+      if (SW.peds[qi].mugger && SW.peds[qi].alive) {
+        assert.ok(!SW.peds[qi].hostile, 'mugger not hostile after event times out');
+      }
+    }
+
+    // VICTIM-DEATH path
+    assert.ok(IN.startStreetEvent() === true, 'third event starts');
+    assert.ok(SW.event, 'event exists for victim-death path');
+    var victim2 = null;
+    for (var ri = 0; ri < SW.peds.length; ri++) if (SW.peds[ri].eventVictim) { victim2 = SW.peds[ri]; break; }
+    assert.ok(victim2, 'victim ped found');
+    victim2.hp = 0.01;
+    // step a few frames — victim dies, event ends
+    for (var fi = 0; fi < 5 && SW.event; fi++) se.step(1 / 60, {});
+    assert.ok(SW.event === null, 'event ends when victim dies');
+
+    checkInvariants(se, 'street-event');
+  })();
+
+  // 16) dt extremes
   eng.step(0, {}); eng.step(0.1, {}); checkInvariants(eng, 'dt-extreme');
 
   console.log('PASS — ' + total + ' steps simulated with no errors.');
