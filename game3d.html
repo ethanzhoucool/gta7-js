@@ -56,6 +56,8 @@
       text-shadow: 0 1px 3px #000; display: none; }
     #hurt { position: fixed; inset: 0; pointer-events: none; opacity: 0;
       box-shadow: inset 0 0 200px 60px rgba(200,0,0,.85); background: radial-gradient(transparent 55%, rgba(160,0,0,.25)); }
+    #vig { position: fixed; inset: 0; pointer-events: none; z-index: 1;
+      background: radial-gradient(ellipse 105% 90% at 50% 45%, transparent 62%, rgba(6,8,14,.38) 100%); }
     #popups { position: fixed; inset: 0; overflow: hidden; }
     #popups .pop { position: absolute; font: bold 20px Arial; color: #6bf08a; text-shadow: 0 2px 4px #000, 0 0 8px rgba(57,211,83,.5); white-space: nowrap; transform: translate(-50%, -50%); }
     #popups .neg { color: #ff6b6b; text-shadow: 0 2px 4px #000, 0 0 8px rgba(255,90,90,.5); }
@@ -102,6 +104,7 @@
 </head>
 <body>
   <canvas id="c"></canvas>
+  <div id="vig"></div>
 
   <div id="hud" class="ui">
     <div id="hpwrap"><div id="hp"></div></div>
@@ -247,39 +250,192 @@
     resize();
 
     /* ----------------------------- Build world ---------------------------- */
-    var maxAniso = renderer.capabilities.getMaxAnisotropy();
+    var maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy()); // 8 is visually plenty; 16 is slow on software GL
 
-    // Procedural asphalt + symmetric lane markings (works on a grid where roads run
-    // both axes), drawn to a CanvasTexture so the road reads as a real street.
-    function makeRoadTexture() {
-      var S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S;
-      var c = cv.getContext('2d');
-      c.fillStyle = '#2f333b'; c.fillRect(0, 0, S, S);
-      c.fillStyle = '#3b404a'; c.fillRect(0, 0, S, 4); c.fillRect(0, S - 4, S, 4); c.fillRect(0, 0, 4, S); c.fillRect(S - 4, 0, 4, S);
-      c.fillStyle = '#d9cf8a';
-      for (var i = 8; i < S; i += 28) { c.fillRect(S / 2 - 2, i, 4, 14); c.fillRect(i, S / 2 - 2, 14, 4); }
-      var t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.anisotropy = maxAniso; t.encoding = THREE.sRGBEncoding; return t;
-    }
-    // Procedural facade: a dark wall (diffuse) + a grid of windows, ~half lit (emissive).
-    function makeFacade() {
-      var S = 256, cv = document.createElement('canvas'); cv.width = cv.height = S;
-      var c = cv.getContext('2d');
-      c.fillStyle = '#7c8290'; c.fillRect(0, 0, S, S);
-      var ev = document.createElement('canvas'); ev.width = ev.height = S;
-      var e = ev.getContext('2d'); e.fillStyle = '#000'; e.fillRect(0, 0, S, S);
-      var cols = 4, rows = 4, pad = S * 0.1, gw = (S - pad * 2) / cols, gh = (S - pad * 2) / rows;
-      for (var r = 0; r < rows; r++) for (var k = 0; k < cols; k++) {
-        var wx = pad + k * gw + gw * 0.18, wy = pad + r * gh + gh * 0.18, ww = gw * 0.64, wh = gh * 0.7;
-        c.fillStyle = '#2b333f'; c.fillRect(wx, wy, ww, wh);
-        e.fillStyle = (Math.random() < 0.55) ? (Math.random() < 0.5 ? '#ffd98a' : '#ffe9c2') : '#0a0a0a';
-        e.fillRect(wx, wy, ww, wh);
+    /* ---------- procedural texture suite (canvas-drawn, no asset files) ---------- */
+    function mkCanvas(w, h) { var cv = document.createElement('canvas'); cv.width = w; cv.height = h || w; return cv; }
+    function ctex(cv) { var t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = maxAniso; t.encoding = THREE.sRGBEncoding; return t; }
+    function speckle(c, S, n, alpha, dark) { // grime/noise pass — kills the flat "plastic" fill look
+      for (var i = 0; i < n; i++) {
+        var g = (dark ? 0 : 160) + (Math.random() * 90) | 0;
+        c.fillStyle = 'rgba(' + g + ',' + g + ',' + g + ',' + alpha + ')';
+        c.fillRect(Math.random() * S, Math.random() * S, 1 + Math.random() * 2.5, 1 + Math.random() * 2.5);
       }
-      var diff = new THREE.CanvasTexture(cv), emis = new THREE.CanvasTexture(ev);
-      [diff, emis].forEach(function (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 6); t.anisotropy = maxAniso; t.encoding = THREE.sRGBEncoding; });
-      return { diff: diff, emis: emis };
     }
-    var roadTex = makeRoadTexture(), facade = makeFacade();
+    // Straight road, traffic running along canvas Y (world Z unrotated): double-yellow
+    // center, dashed white lane dividers, white edge lines, gutter shading, tire wear.
+    function makeRoadTexStraight() {
+      var S = 256, cv = mkCanvas(S), c = cv.getContext('2d');
+      c.fillStyle = '#34373d'; c.fillRect(0, 0, S, S);
+      speckle(c, S, 1200, 0.10, true); speckle(c, S, 500, 0.06, false);
+      c.fillStyle = 'rgba(0,0,0,.30)'; c.fillRect(0, 0, 12, S); c.fillRect(S - 12, 0, 12, S);  // gutters
+      c.fillStyle = 'rgba(0,0,0,.10)'; c.fillRect(S * 0.17, 0, 18, S); c.fillRect(S * 0.69, 0, 18, S); // tire wear
+      c.fillStyle = 'rgba(230,229,220,.85)'; c.fillRect(20, 0, 3, S); c.fillRect(S - 23, 0, 3, S);     // edge lines
+      c.fillStyle = '#c9b455';                                                                          // double yellow
+      c.fillRect(S / 2 - 5, 0, 3, S); c.fillRect(S / 2 + 2, 0, 3, S);
+      c.fillStyle = 'rgba(230,229,220,.8)';                                                             // lane dashes
+      for (var y = 6; y < S; y += 44) { c.fillRect(S * 0.25 - 1, y, 3, 24); c.fillRect(S * 0.75 - 2, y, 3, 24); }
+      return ctex(cv);
+    }
+    // Half of a 2-tile-wide avenue: solid yellow median on the canvas-LEFT edge,
+    // dashed lane divider mid-tile, white line at the curb edge. Rotated so the
+    // yellow lands on the shared boundary between the twin lanes.
+    function makeRoadTexHalf() {
+      var S = 256, cv = mkCanvas(S), c = cv.getContext('2d');
+      c.fillStyle = '#34373d'; c.fillRect(0, 0, S, S);
+      speckle(c, S, 1200, 0.10, true); speckle(c, S, 500, 0.06, false);
+      c.fillStyle = 'rgba(0,0,0,.30)'; c.fillRect(S - 12, 0, 12, S);                  // curb gutter
+      c.fillStyle = 'rgba(0,0,0,.10)'; c.fillRect(S * 0.22, 0, 18, S); c.fillRect(S * 0.66, 0, 18, S);
+      c.fillStyle = '#c9b455'; c.fillRect(4, 0, 3, S); c.fillRect(11, 0, 3, S);       // median double yellow
+      c.fillStyle = 'rgba(230,229,220,.85)'; c.fillRect(S - 23, 0, 3, S);             // curb edge line
+      c.fillStyle = 'rgba(230,229,220,.8)';
+      for (var y = 6; y < S; y += 44) c.fillRect(S * 0.5 - 1, y, 3, 24);              // lane dashes
+      return ctex(cv);
+    }
+    // Intersection: plain asphalt + zebra crosswalks across all four entries.
+    function makeRoadTexCross() {
+      var S = 256, cv = mkCanvas(S), c = cv.getContext('2d');
+      c.fillStyle = '#34373d'; c.fillRect(0, 0, S, S);
+      speckle(c, S, 1200, 0.10, true); speckle(c, S, 500, 0.06, false);
+      c.fillStyle = 'rgba(235,234,226,.82)';
+      for (var i = 30; i <= S - 40; i += 22) {
+        c.fillRect(i, 8, 11, 30); c.fillRect(i, S - 38, 11, 30);   // N + S crosswalks
+        c.fillRect(8, i, 30, 11); c.fillRect(S - 38, i, 30, 11);   // W + E crosswalks
+      }
+      return ctex(cv);
+    }
+    function makeSidewalkTex() {
+      var S = 256, cv = mkCanvas(S), c = cv.getContext('2d');
+      c.fillStyle = '#b3b0a6'; c.fillRect(0, 0, S, S);
+      speckle(c, S, 1100, 0.08, true); speckle(c, S, 700, 0.10, false);
+      c.strokeStyle = 'rgba(0,0,0,.18)'; c.lineWidth = 2;                 // expansion joints
+      for (var i = 0; i <= S; i += 64) { c.beginPath(); c.moveTo(i, 0); c.lineTo(i, S); c.stroke(); c.beginPath(); c.moveTo(0, i); c.lineTo(S, i); c.stroke(); }
+      var t = ctex(cv); t.repeat.set(2, 2); return t;
+    }
+    function makeGrassTex() {
+      var S = 128, cv = mkCanvas(S), c = cv.getContext('2d');
+      c.fillStyle = '#5d8444'; c.fillRect(0, 0, S, S);
+      for (var i = 0; i < 900; i++) {
+        var g = 90 + Math.random() * 80 | 0;
+        c.fillStyle = 'rgba(' + (g * 0.55 | 0) + ',' + g + ',' + (g * 0.42 | 0) + ',0.5)';
+        c.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+      }
+      var t = ctex(cv); t.repeat.set(2, 2); return t;
+    }
+    function makeRoofTex() {
+      var S = 256, cv = mkCanvas(S), c = cv.getContext('2d');
+      c.fillStyle = '#84827e'; c.fillRect(0, 0, S, S);                    // light gravel (instance tint shows)
+      speckle(c, S, 1600, 0.12, true); speckle(c, S, 600, 0.10, false);
+      c.strokeStyle = 'rgba(255,255,255,.28)'; c.lineWidth = 10; c.strokeRect(5, 5, S - 10, S - 10); // parapet
+      c.fillStyle = 'rgba(0,0,0,.22)'; c.fillRect(S * 0.58, S * 0.2, S * 0.2, S * 0.16);             // vent pad
+      return ctex(cv);
+    }
+    // Facade builders return {diff, emis}. Walls are kept BRIGHT — per-instance pastel
+    // tints multiply them. Emissive maps hold the lit-window pattern (ramped at night).
+    function facadePair(draw) {
+      var S = 256, cv = mkCanvas(S), c = cv.getContext('2d');
+      var ev = mkCanvas(S), e = ev.getContext('2d');
+      e.fillStyle = '#000'; e.fillRect(0, 0, S, S);
+      draw(c, e, S);
+      return { diff: ctex(cv), emis: ctex(ev) };
+    }
+    // Victorian/pastel row-house: tall framed sash windows, sills, cornice band. 2 floors per repeat.
+    function makeFacadeVictorian() {
+      return facadePair(function (c, e, S) {
+        c.fillStyle = '#e9e3d7'; c.fillRect(0, 0, S, S);
+        speckle(c, S, 350, 0.05, true);
+        var rows = 2, cols = 4, fh = S / rows, cw = S / cols;
+        for (var r = 0; r < rows; r++) {
+          c.fillStyle = 'rgba(0,0,0,.14)'; c.fillRect(0, (r + 1) * fh - 4, S, 4);     // floor shadow line
+          c.fillStyle = 'rgba(255,255,255,.5)'; c.fillRect(0, r * fh, S, 5);          // cornice highlight
+          for (var k = 0; k < cols; k++) {
+            var wx = k * cw + cw * 0.26, wy = r * fh + fh * 0.18, ww = cw * 0.48, wh = fh * 0.58;
+            c.fillStyle = '#faf7ef'; c.fillRect(wx - 5, wy - 5, ww + 10, wh + 10);    // frame
+            var gr = c.createLinearGradient(0, wy, 0, wy + wh);                       // glass w/ sky gradient
+            gr.addColorStop(0, '#7e95a8'); gr.addColorStop(1, '#41566b');
+            c.fillStyle = gr; c.fillRect(wx, wy, ww, wh);
+            c.fillStyle = '#faf7ef'; c.fillRect(wx, wy + wh * 0.48, ww, 4);           // sash bar
+            c.fillStyle = '#cfc7b4'; c.fillRect(wx - 7, wy + wh + 5, ww + 14, 6);     // sill
+            var lit = Math.random() < 0.5;
+            e.fillStyle = lit ? (Math.random() < 0.5 ? '#ffd98a' : '#ffe9c2') : '#050505';
+            e.fillRect(wx, wy, ww, wh);
+          }
+        }
+      });
+    }
+    // Modern flat-top: ribbon windows with mullions over light concrete spandrels.
+    function makeFacadeModern() {
+      return facadePair(function (c, e, S) {
+        c.fillStyle = '#ccd1d5'; c.fillRect(0, 0, S, S);
+        speckle(c, S, 300, 0.05, true);
+        var rows = 2, fh = S / rows;
+        for (var r = 0; r < rows; r++) {
+          var by = r * fh + fh * 0.16, bh = fh * 0.5;
+          c.fillStyle = '#39474f'; c.fillRect(8, by, S - 16, bh);                     // ribbon glass
+          c.fillStyle = 'rgba(160,190,205,.35)'; c.fillRect(8, by, S - 16, bh * 0.4); // sky reflection
+          c.fillStyle = '#9aa4ab';
+          for (var x = 8; x <= S - 8; x += 25) c.fillRect(x, by, 3, bh);              // mullions
+          c.fillStyle = 'rgba(0,0,0,.16)'; c.fillRect(0, (r + 1) * fh - 5, S, 5);
+          for (var seg = 8; seg < S - 8; seg += 25) {                                  // lit segments
+            e.fillStyle = (Math.random() < 0.45) ? '#d9e6ff' : '#050505';
+            e.fillRect(seg + 3, by + 2, 19, bh - 4);
+          }
+        }
+      });
+    }
+    // Dockside warehouse: corrugated panels, high clerestory windows, roller door.
+    function makeFacadeWarehouse() {
+      return facadePair(function (c, e, S) {
+        c.fillStyle = '#cdc1ab'; c.fillRect(0, 0, S, S);
+        for (var x = 0; x < S; x += 8) { c.fillStyle = (x % 16 === 0) ? 'rgba(0,0,0,.10)' : 'rgba(255,255,255,.12)'; c.fillRect(x, 0, 4, S); }
+        speckle(c, S, 700, 0.10, true);
+        c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(0, S - 6, S, 6);
+        for (var k = 0; k < 5; k++) {                                                  // clerestory row
+          var wx = 14 + k * 48, wy = 18, ww = 34, wh = 26;
+          c.fillStyle = '#5d6a76'; c.fillRect(wx, wy, ww, wh);
+          c.fillStyle = 'rgba(255,255,255,.25)'; c.fillRect(wx, wy, ww, 8);
+          e.fillStyle = (Math.random() < 0.3) ? '#ffd98a' : '#050505'; e.fillRect(wx, wy, ww, wh);
+        }
+        c.fillStyle = '#8a8276'; c.fillRect(S * 0.32, S * 0.42, S * 0.36, S * 0.56);   // roller door
+        c.fillStyle = 'rgba(0,0,0,.20)';
+        for (var dy = S * 0.46; dy < S * 0.96; dy += 9) c.fillRect(S * 0.32, dy, S * 0.36, 3);
+      });
+    }
+    // Downtown curtain wall: blue glass panel grid with per-panel reflection variance.
+    function makeFacadeGlass() {
+      return facadePair(function (c, e, S) {
+        c.fillStyle = '#2e3742'; c.fillRect(0, 0, S, S);                               // mullion grid base
+        var rows = 4, cols = 6, ph = S / rows, pw = S / cols;
+        for (var r = 0; r < rows; r++) for (var k = 0; k < cols; k++) {
+          var v = 0.78 + Math.random() * 0.5;                                          // panel brightness variance
+          c.fillStyle = 'rgb(' + (118 * v | 0) + ',' + (152 * v | 0) + ',' + (182 * v | 0) + ')';
+          c.fillRect(k * pw + 2, r * ph + 2, pw - 4, ph - 4);
+          c.fillStyle = 'rgba(255,255,255,.18)'; c.fillRect(k * pw + 2, r * ph + 2, pw - 4, ph * 0.28);
+          var lit = Math.random();
+          e.fillStyle = lit < 0.38 ? '#cfe2ff' : (lit < 0.5 ? '#ffe2a8' : '#040404');
+          e.fillRect(k * pw + 3, r * ph + 3, pw - 6, ph - 6);
+        }
+      });
+    }
+    function makeGlowTex() { // soft radial dot for lamp glow points
+      var S = 64, cv = mkCanvas(S), c = cv.getContext('2d');
+      var g = c.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S / 2);
+      g.addColorStop(0, 'rgba(255,228,170,1)'); g.addColorStop(0.4, 'rgba(255,210,130,.35)'); g.addColorStop(1, 'rgba(255,200,110,0)');
+      c.fillStyle = g; c.fillRect(0, 0, S, S);
+      return new THREE.CanvasTexture(cv);
+    }
+    function makeCloudTex() {
+      var W2 = 256, H2 = 128, cv = mkCanvas(W2, H2), c = cv.getContext('2d');
+      for (var i = 0; i < 7; i++) {
+        var x = 30 + Math.random() * (W2 - 60), y = H2 * 0.4 + Math.random() * H2 * 0.3, r = 22 + Math.random() * 30;
+        var g = c.createRadialGradient(x, y, 2, x, y, r);
+        g.addColorStop(0, 'rgba(255,255,255,.85)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = g; c.fillRect(0, 0, W2, H2);
+      }
+      return new THREE.CanvasTexture(cv);
+    }
+    var roadTexS = makeRoadTexStraight(), roadTexC = makeRoadTexCross(), roadTexH = makeRoadTexHalf();
+    var sidewalkTex = makeSidewalkTex(), grassTex = makeGrassTex(), roofTex = makeRoofTex();
 
     // ground
     var ground = new THREE.Mesh(
@@ -290,88 +446,289 @@
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // count tiles by type (TW guarded so an older engine without T_WATER still counts cleanly)
     var TW = (K.T_WATER != null) ? K.T_WATER : -1;
-    var nRoad = 0, nBuild = 0, nPark = 0, nWater = 0, x, z;
+    var _bcol = new THREE.Color();
+    function bhash(a, b) { var h = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return h - Math.floor(h); }
+    function roadAt(xx, zz) { return xx >= 0 && zz >= 0 && xx < MAP && zz < MAP && W.grid[zz][xx] === K.T_ROAD; }
+    function inChannel(zz) { return K.CHANNEL_Z0 != null && zz >= K.CHANNEL_Z0 && zz <= K.CHANNEL_Z1; }
+    function inDowntown(xx, zz) { return DOWNTOWN && xx >= DOWNTOWN.x0 && xx < DOWNTOWN.x1 && zz >= DOWNTOWN.z0 && zz < DOWNTOWN.z1; }
+    // road tile kind: 0 = straight N-S, 1 = straight E-W, 2 = intersection (crosswalk texture).
+    // Roads (and the bridge) can be 2 tiles wide, so a naive "neighbors on both axes"
+    // test calls every avenue tile an intersection. Use contiguous run lengths instead:
+    // a real crossing extends ≥3 tiles along BOTH axes through this tile.
+    function roadRun(xx, zz, dx, dz) {
+      var n = 1, i;
+      for (i = 1; i <= 3; i++) { if (roadAt(xx + dx * i, zz + dz * i)) n++; else break; }
+      for (i = 1; i <= 3; i++) { if (roadAt(xx - dx * i, zz - dz * i)) n++; else break; }
+      return n;
+    }
+    function roadKind(xx, zz) {
+      var runZ = roadRun(xx, zz, 0, 1), runX = roadRun(xx, zz, 1, 0);
+      if (runZ >= 3 && runX >= 3) return 2;
+      return runZ >= runX ? 0 : 1;
+    }
+    // straight-tile orientation: if the tile is one lane of a 2-wide avenue, use the
+    // half-slab texture rotated so its yellow median sits on the shared boundary.
+    function straightLay(xx, zz, kind) {
+      if (kind === 0) {
+        var l = roadAt(xx - 1, zz), r = roadAt(xx + 1, zz);
+        if (l !== r) return { yaw: l ? 0 : Math.PI, half: true };
+        return { yaw: 0, half: false };
+      }
+      var u = roadAt(xx, zz - 1), d = roadAt(xx, zz + 1);
+      if (u !== d) return { yaw: u ? -Math.PI / 2 : Math.PI / 2, half: true };
+      return { yaw: Math.PI / 2, half: false };
+    }
+
+    /* -- building classes, keyed to the engine's per-block archetypes -- */
+    // Palettes stay BRIGHT (they multiply the facade textures).
+    var PASTEL = [0xF2E3CE, 0xE2EAD2, 0xD5E3F0, 0xF4DADA, 0xF0E0C2, 0xE2D9EA, 0xD9EAE4, 0xFAF2E6];
+    var GREYS = [0xE6E8EA, 0xD8D2C2, 0xD2DCE2, 0xE8E2D4];
+    var WAREHOUSE = [0xE8D8C8, 0xD8C8B8, 0xCEC8BE, 0xE0D6C0];
+    var GLASS = [0xA6C4DE, 0x96BCCC, 0xB0CAE4, 0x9CB6D2];
+    var roofMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: roofTex, roughness: 0.95, metalness: 0.04 });
+    var facadeMats = [];   // applyTimeOfDay ramps every entry's emissiveIntensity (window glow)
+    function bldgClass(tex, rough, metal, glow, palette, repX, repY) {
+      tex.diff.repeat.set(repX, repY); tex.emis.repeat.set(repX, repY);
+      var side = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex.diff, roughness: rough, metalness: metal,
+        emissive: 0xffffff, emissiveMap: tex.emis, emissiveIntensity: 0.0 });
+      side._glow = glow; facadeMats.push(side);
+      // BoxGeometry face order: +x,-x,+y,-y,+z,-z → facade on the four sides, real roof on top
+      return { mats: [side, side, roofMat, roofMat, side, side], palette: palette, n: 0, i: 0, im: null };
+    }
+    var BCLASS = [
+      bldgClass(makeFacadeVictorian(), 0.85, 0.03, 1.0, PASTEL, 2, 2),
+      bldgClass(makeFacadeModern(), 0.6, 0.10, 0.9, GREYS, 2, 2),
+      bldgClass(makeFacadeWarehouse(), 0.9, 0.06, 0.5, WAREHOUSE, 1, 1),
+      bldgClass(makeFacadeGlass(), 0.3, 0.45, 1.3, GLASS, 3, 9)
+    ];
+    var ARCH2CLASS = [0, 3, 1, 2];  // engine archetypes: victorian / glass tower / modern / warehouse
+    function classAt(xx, zz) {
+      var a = (W.buildingArchetypes && W.buildingArchetypes[zz]) ? W.buildingArchetypes[zz][xx] : (inDowntown(xx, zz) ? 1 : 0);
+      return ARCH2CLASS[a] != null ? ARCH2CLASS[a] : 0;
+    }
+
+    /* -- deterministic street-furniture placement (same fn drives count + fill passes) -- */
+    function lampSpotsFor(xx, zz) {  // lamps stand on the sidewalk ring of blocks that touch a road
+      var spots = [];
+      if (((xx + zz) % 2) !== 0) return spots;
+      var cx = xx * TILE + TILE / 2, cz = zz * TILE + TILE / 2, off = TILE / 2 - 0.7;
+      if (roadAt(xx, zz - 1)) spots.push({ x: cx, z: cz - off, dx: 0, dz: -1 });
+      if (roadAt(xx, zz + 1)) spots.push({ x: cx, z: cz + off, dx: 0, dz: 1 });
+      if (roadAt(xx - 1, zz)) spots.push({ x: cx - off, z: cz, dx: -1, dz: 0 });
+      if (roadAt(xx + 1, zz)) spots.push({ x: cx + off, z: cz, dx: 1, dz: 0 });
+      return spots;
+    }
+    var PARKED_COLORS = [0xd8d8d8, 0x16181d, 0x8a9097, 0xa33327, 0x2b4d7e, 0x70513c, 0xc2bfae, 0x33524a];
+    function parkedFor(xx, zz, kind) {  // curb-parked car on ~1/3 of straight road tiles
+      if (bhash(xx * 3 + 7, zz * 5 + 1) > 0.34 || inChannel(zz)) return null;
+      // only park against a REAL curb (perpendicular neighbor isn't road) — never on an avenue median
+      var nA = (kind === 0) ? roadAt(xx - 1, zz) : roadAt(xx, zz - 1);
+      var nB = (kind === 0) ? roadAt(xx + 1, zz) : roadAt(xx, zz + 1);
+      if (nA && nB) return null;                       // center lane of a wide slab
+      var side = nA ? 1 : (nB ? -1 : (bhash(xx, zz + 9) < 0.5 ? -1 : 1));
+      var lane = TILE / 2 - 1.5;
+      var jit = (bhash(xx + 4, zz + 2) - 0.5) * 4, flip = bhash(xx + 1, zz + 6) < 0.5 ? 0 : Math.PI;
+      var cx = xx * TILE + TILE / 2, cz = zz * TILE + TILE / 2;
+      var col = PARKED_COLORS[(xx * 5 + zz * 11) % PARKED_COLORS.length];
+      if (kind === 0) return { x: cx + side * lane, z: cz + jit, yaw: flip, col: col };
+      return { x: cx + jit, z: cz + side * lane, yaw: Math.PI / 2 + flip, col: col };
+    }
+    var TREE_GREENS = [0x4d8a3c, 0x3f7a36, 0x69a04b, 0x86984a];
+    function treesFor(xx, zz) {  // 1-2 jittered, scaled trees per park tile; mix of conifer + broadleaf
+      var cx = xx * TILE + TILE / 2, cz = zz * TILE + TILE / 2, out = [];
+      var n = 1 + (bhash(xx * 5 + 3, zz * 7 + 1) < 0.55 ? 1 : 0);
+      for (var k = 0; k < n; k++) {
+        out.push({
+          x: cx + (bhash(xx * 2 + k * 11, zz + k * 3) - 0.5) * 7.0,
+          z: cz + (bhash(xx + k * 7, zz * 3 + k * 5) - 0.5) * 7.0,
+          s: 0.75 + bhash(xx + k, zz * 2 + k) * 0.7,
+          conif: bhash(xx * 3 + k, zz + 4 * k) < 0.4,
+          c: TREE_GREENS[(xx * 3 + zz * 7 + k * 5) % TREE_GREENS.length]
+        });
+      }
+      return out;
+    }
+
+    /* -- COUNT PASS -- */
+    var nStraight = 0, nHalf = 0, nCross = 0, nBuild = 0, nPark = 0, nWater = 0, nLamp = 0, nParked = 0, nConif = 0, nBlob = 0, x, z, k;
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var t = W.grid[z][x];
-      if (t === K.T_ROAD) nRoad++; else if (t === K.T_BUILDING) nBuild++;
-      else if (t === TW) nWater++; else nPark++;
+      if (t === K.T_ROAD) {
+        var kk = roadKind(x, z);
+        if (kk === 2) nCross++;
+        else {
+          if (straightLay(x, z, kk).half) nHalf++; else nStraight++;
+          if (parkedFor(x, z, kk)) nParked++;
+        }
+      } else if (t === TW) nWater++;
+      else {
+        nLamp += lampSpotsFor(x, z).length;
+        if (t === K.T_PARK) {
+          nPark++;
+          var tl = treesFor(x, z);
+          for (k = 0; k < tl.length; k++) { if (tl[k].conif) nConif++; else nBlob++; }
+        } else { nBuild++; BCLASS[classAt(x, z)].n++; }
+      }
     }
     if (nWater === 0) nWater = 1;  // never allocate a 0-instance mesh
+    nParked = Math.max(1, nParked); nLamp = Math.max(1, nLamp); nConif = Math.max(1, nConif); nBlob = Math.max(1, nBlob);
 
+    /* -- ALLOCATE -- */
     var m4 = new THREE.Matrix4();
-    // roads (asphalt + lane markings)
-    var roads = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, map: roadTex, roughness: 0.65, metalness: 0.08 }), nRoad);
-    // parks
-    var parks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.84, 0.25, TILE * 0.84), // inset so the sidewalk shows
-      new THREE.MeshStandardMaterial({ color: 0x2f5a2f, roughness: 0.9, metalness: 0.0 }), nPark);
-    // buildings (height baked into per-instance scale; lit windows via emissive map; per-instance tint)
-    var bldgs = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.84, 1, TILE * 0.84),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, map: facade.diff, roughness: 0.82, metalness: 0.05,
-        emissive: 0xffffff, emissiveMap: facade.emis, emissiveIntensity: 0.0, vertexColors: true }), nBuild);
-    // trees (one per park tile): trunk + foliage
-    var trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.4, 2.4, 6),
-      new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.9, metalness: 0.0 }), nPark);
-    var leaves = new THREE.InstancedMesh(new THREE.ConeGeometry(2.2, 4.5, 7),
-      new THREE.MeshStandardMaterial({ color: 0x2f7a37, roughness: 0.85, metalness: 0.0 }), nPark);
-    // bay water — one InstancedMesh (one draw call). MeshStandardMaterial (not a shader) so ?lowgl renders it.
+    var roadsS = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, map: roadTexS, roughness: 0.8, metalness: 0.04 }), Math.max(1, nStraight));
+    var roadsH = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, map: roadTexH, roughness: 0.8, metalness: 0.04 }), Math.max(1, nHalf));
+    var roadsC = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, map: roadTexC, roughness: 0.8, metalness: 0.04 }), Math.max(1, nCross));
+    var parks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.84, 0.25, TILE * 0.84),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, map: grassTex, roughness: 0.95, metalness: 0.0 }), Math.max(1, nPark));
+    var bldgGeo = new THREE.BoxGeometry(TILE * 0.84, 1, TILE * 0.84);
+    BCLASS.forEach(function (cl) { cl.im = new THREE.InstancedMesh(bldgGeo, cl.mats, Math.max(1, cl.n)); });
     var water = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.2, TILE),
-      new THREE.MeshStandardMaterial({ color: 0x2e6f8e, roughness: 0.25, metalness: 0.35, transparent: true, opacity: 0.92 }), nWater);
+      new THREE.MeshStandardMaterial({ color: 0x3679a0, roughness: 0.18, metalness: 0.4, transparent: true, opacity: 0.92 }), nWater);
     water.receiveShadow = true;
-    // sidewalks: a light concrete pad filling each building/park tile; the building (0.84) and
-    // grass (0.84) sit inset on top, so a curb border shows between them and the road.
     var sidewalks = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE, 0.24, TILE),
-      new THREE.MeshStandardMaterial({ color: 0xb8b4ab, roughness: 0.95, metalness: 0.0 }), nBuild + nPark);
-    // rooftop detail (water tank / AC unit) on each building — breaks up the flat-box skyline
+      new THREE.MeshStandardMaterial({ color: 0xffffff, map: sidewalkTex, roughness: 0.95, metalness: 0.0 }), nBuild + nPark);
     var roofs = new THREE.InstancedMesh(new THREE.BoxGeometry(TILE * 0.34, 1.3, TILE * 0.34),
       new THREE.MeshStandardMaterial({ color: 0x6b6e75, roughness: 0.9, metalness: 0.1 }), nBuild);
     sidewalks.receiveShadow = true;
+    // trees
+    var trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.34, 2.6, 6),
+      new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.9, metalness: 0.0 }), nConif + nBlob);
+    var leafMatC = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.0 });
+    var leavesConif = new THREE.InstancedMesh(new THREE.ConeGeometry(2.0, 4.6, 7), leafMatC, nConif);
+    var leavesBlob = new THREE.InstancedMesh(new THREE.SphereGeometry(2.1, 7, 6), leafMatC, nBlob);
+    // streetlights: pole/arm/head share one matrix; geometry offsets do the shaping
+    var lampPoleGeo = new THREE.CylinderGeometry(0.07, 0.11, 5.2, 6); lampPoleGeo.translate(0, 2.6, 0);
+    var lampArmGeo = new THREE.BoxGeometry(0.1, 0.09, 1.4); lampArmGeo.translate(0, 5.15, 0.6);
+    var lampHeadGeo = new THREE.BoxGeometry(0.34, 0.13, 0.66); lampHeadGeo.translate(0, 5.06, 1.15);
+    var lampMetalMat = new THREE.MeshStandardMaterial({ color: 0x2b2e34, roughness: 0.6, metalness: 0.7 });
+    var lampHeadMat = new THREE.MeshStandardMaterial({ color: 0xd8d4c4, emissive: 0xffdf9e, emissiveIntensity: 0.15, roughness: 0.5 });
+    var lampPoles = new THREE.InstancedMesh(lampPoleGeo, lampMetalMat, nLamp);
+    var lampArms = new THREE.InstancedMesh(lampArmGeo, lampMetalMat, nLamp);
+    var lampHeads = new THREE.InstancedMesh(lampHeadGeo, lampHeadMat, nLamp);
+    var lampGlowPos = new Float32Array(nLamp * 3);
+    // parked cars (visual set-dressing): body + glass cabin + wheels
+    var pBodyGeo = new THREE.BoxGeometry(2.0, 0.55, 4.4); pBodyGeo.translate(0, 0.62, 0);
+    var pCabGeo = new THREE.BoxGeometry(1.78, 0.46, 2.3); pCabGeo.translate(0, 1.1, -0.15);
+    var pBody = new THREE.InstancedMesh(pBodyGeo,
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.5 }), nParked);
+    var pCab = new THREE.InstancedMesh(pCabGeo,
+      new THREE.MeshStandardMaterial({ color: 0x1b2530, roughness: 0.12, metalness: 0.4 }), nParked);
+    var pWheelGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.26, 10); pWheelGeo.rotateZ(Math.PI / 2);
+    var pWheels = new THREE.InstancedMesh(pWheelGeo,
+      new THREE.MeshStandardMaterial({ color: 0x131318, roughness: 0.8, metalness: 0.1 }), nParked * 4);
 
-    var _bcol = new THREE.Color();
-    function bhash(a, b) { var h = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return h - Math.floor(h); }
-    // SF palette: light "Painted Ladies" pastels for residential low-rise, cool glass for
-    // downtown towers. Values are kept BRIGHT because they multiply the facade texture.
-    var PASTEL = [0xEAD7C2, 0xD8E0C8, 0xCBD9E6, 0xEAD0D0, 0xE6D6B8, 0xD8CFE0, 0xCFE0DA, 0xF0E8DC];
-    var GLASS = [0x5C7A99, 0x4A7A82, 0x6E8FB0];
-    function inDowntown(xx, zz) { return DOWNTOWN && xx >= DOWNTOWN.x0 && xx < DOWNTOWN.x1 && zz >= DOWNTOWN.z0 && zz < DOWNTOWN.z1; }
-    var ri = 0, pi = 0, bi = 0, wi = 0, si = 0;
+    /* -- FILL PASS -- */
+    var ri = 0, hi = 0, ci = 0, pi = 0, wi = 0, si = 0, bi = 0, li = 0, pk = 0, ti = 0, tci = 0, tbi = 0;
+    var _v = new THREE.Vector3();
     for (z = 0; z < MAP; z++) for (x = 0; x < MAP; x++) {
       var cx = x * TILE + TILE / 2, cz = z * TILE + TILE / 2, tt = W.grid[z][x];
-      if (tt === K.T_ROAD) { m4.makeTranslation(cx, 0.1, cz); roads.setMatrixAt(ri++, m4); }
+      if (tt === K.T_ROAD) {
+        var kind = roadKind(x, z);
+        if (kind === 2) { m4.makeTranslation(cx, 0.1, cz); roadsC.setMatrixAt(ci++, m4); }
+        else {
+          var lay = straightLay(x, z, kind);
+          m4.makeRotationY(lay.yaw); m4.setPosition(cx, 0.1, cz);
+          if (lay.half) roadsH.setMatrixAt(hi++, m4); else roadsS.setMatrixAt(ri++, m4);
+          var pcar = parkedFor(x, z, kind);
+          if (pcar) {
+            m4.makeRotationY(pcar.yaw); m4.setPosition(pcar.x, 0.2, pcar.z);
+            pBody.setMatrixAt(pk, m4); pCab.setMatrixAt(pk, m4);
+            _bcol.setHex(pcar.col); pBody.setColorAt(pk, _bcol);
+            var WOFF = [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]];
+            for (k = 0; k < 4; k++) {
+              _v.set(WOFF[k][0], 0, WOFF[k][1]).applyAxisAngle(new THREE.Vector3(0, 1, 0), pcar.yaw);
+              m4.makeRotationY(pcar.yaw); m4.setPosition(pcar.x + _v.x, 0.53, pcar.z + _v.z);
+              pWheels.setMatrixAt(pk * 4 + k, m4);
+            }
+            pk++;
+          }
+        }
+      }
       else if (tt === TW) { m4.makeTranslation(cx, 0.05, cz); water.setMatrixAt(wi++, m4); }
-      else if (tt === K.T_PARK) {
-        m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);   // curb pad under the block
-        m4.makeTranslation(cx, 0.3, cz); parks.setMatrixAt(pi, m4);
-        m4.makeTranslation(cx, 1.4, cz); trunks.setMatrixAt(pi, m4);
-        m4.makeTranslation(cx, 4.6, cz); leaves.setMatrixAt(pi, m4);
-        pi++;
-      } else {
-        m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);   // curb pad the building rises from
-        var hgt = W.buildingHeights[z][x];
-        // varied footprint (different widths/depths + setback) so the row isn't identical boxes
-        var fw = 0.80 + bhash(x, z) * 0.18, fd = 0.80 + bhash(z + 1, x + 2) * 0.18;
-        m4.makeScale(fw, hgt, fd); m4.setPosition(cx, hgt / 2, cz);
-        bldgs.setMatrixAt(bi, m4);
-        // SF tint: glass downtown, pastel everywhere else (deterministic, no two neighbours equal)
-        if (inDowntown(x, z)) _bcol.setHex(GLASS[(x * 7 + z * 13) % GLASS.length]);
-        else _bcol.setHex(PASTEL[(x * 3 + z * 5) % PASTEL.length]);
-        bldgs.setColorAt(bi, _bcol);
-        // a rooftop unit, nudged off-center, to clutter the skyline
-        var rs = 0.55 + bhash(x + 5, z + 7) * 0.5;
-        m4.makeScale(rs, 1, rs); m4.setPosition(cx + (bhash(x, z) - 0.5) * 3, hgt + 0.65, cz + (bhash(z, x) - 0.5) * 3);
-        roofs.setMatrixAt(bi, m4);
-        bi++;
+      else {
+        var lamps = lampSpotsFor(x, z);
+        for (k = 0; k < lamps.length; k++) {
+          var lp = lamps[k], lyaw = Math.atan2(lp.dx, lp.dz);
+          m4.makeRotationY(lyaw); m4.setPosition(lp.x, 0.24, lp.z);
+          lampPoles.setMatrixAt(li, m4); lampArms.setMatrixAt(li, m4); lampHeads.setMatrixAt(li, m4);
+          lampGlowPos[li * 3] = lp.x + lp.dx * 1.15; lampGlowPos[li * 3 + 1] = 5.1; lampGlowPos[li * 3 + 2] = lp.z + lp.dz * 1.15;
+          li++;
+        }
+        if (tt === K.T_PARK) {
+          m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);
+          m4.makeTranslation(cx, 0.3, cz); parks.setMatrixAt(pi++, m4);
+          var trees = treesFor(x, z);
+          for (k = 0; k < trees.length; k++) {
+            var tr = trees[k];
+            m4.makeScale(tr.s, tr.s, tr.s); m4.setPosition(tr.x, 1.3 * tr.s, tr.z);
+            trunks.setMatrixAt(ti++, m4);
+            _bcol.setHex(tr.c);
+            if (tr.conif) {
+              m4.makeScale(tr.s, tr.s, tr.s); m4.setPosition(tr.x, 4.6 * tr.s, tr.z);
+              leavesConif.setMatrixAt(tci, m4); leavesConif.setColorAt(tci, _bcol); tci++;
+            } else {
+              m4.makeScale(tr.s, tr.s * 0.85, tr.s); m4.setPosition(tr.x, 4.0 * tr.s, tr.z);
+              leavesBlob.setMatrixAt(tbi, m4); leavesBlob.setColorAt(tbi, _bcol); tbi++;
+            }
+          }
+        } else {
+          m4.makeTranslation(cx, 0.12, cz); sidewalks.setMatrixAt(si++, m4);   // curb pad the building rises from
+          var hgt = W.buildingHeights[z][x];
+          // varied footprint (different widths/depths + setback) so the row isn't identical boxes.
+          // KEEP this formula in sync with buildStorefronts/buildBusinessFronts (they read it).
+          var fw = 0.80 + bhash(x, z) * 0.18, fd = 0.80 + bhash(z + 1, x + 2) * 0.18;
+          var cl = BCLASS[classAt(x, z)];
+          m4.makeScale(fw, hgt, fd); m4.setPosition(cx, hgt / 2, cz);
+          cl.im.setMatrixAt(cl.i, m4);
+          _bcol.setHex(cl.palette[(x * 3 + z * 5) % cl.palette.length]);
+          cl.im.setColorAt(cl.i, _bcol);
+          cl.i++;
+          // a rooftop unit, nudged off-center, to clutter the skyline
+          var rs = 0.55 + bhash(x + 5, z + 7) * 0.5;
+          m4.makeScale(rs, 1, rs); m4.setPosition(cx + (bhash(x, z) - 0.5) * 3, hgt + 0.65, cz + (bhash(z, x) - 0.5) * 3);
+          roofs.setMatrixAt(bi, m4);
+          bi++;
+        }
       }
     }
+    // lamp glow: one additive Points cloud, faded in at night by applyTimeOfDay
+    var lampGlowGeo = new THREE.BufferGeometry();
+    lampGlowGeo.setAttribute('position', new THREE.BufferAttribute(lampGlowPos, 3));
+    var lampGlowMat = new THREE.PointsMaterial({ size: 5.5, map: makeGlowTex(), transparent: true, opacity: 0.0,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+    lampGlowMat.toneMapped = false;
+    var lampGlow = new THREE.Points(lampGlowGeo, lampGlowMat);
+    lampGlow.frustumCulled = false;
+    scene.add(lampGlow);
+
     // frustumCulled=false: InstancedMesh derives its bounds from the base geometry
     // at the origin, so without this the whole city vanishes when you look away.
-    [roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs].forEach(function (im) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im); });
-    if (bldgs.instanceColor) bldgs.instanceColor.needsUpdate = true;
-    roads.receiveShadow = true; parks.receiveShadow = true;
-    bldgs.castShadow = true; bldgs.receiveShadow = true;
-    trunks.castShadow = true; leaves.castShadow = true;
+    var bldgIMs = BCLASS.map(function (cl) { return cl.im; });
+    var cityIMs = [roadsS, roadsH, roadsC, parks, trunks, leavesConif, leavesBlob, water, sidewalks, roofs,
+      lampPoles, lampArms, lampHeads, pBody, pCab, pWheels].concat(bldgIMs);
+    cityIMs.forEach(function (im) {
+      im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; scene.add(im);
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    });
+    roadsS.receiveShadow = true; roadsH.receiveShadow = true; roadsC.receiveShadow = true; parks.receiveShadow = true;
+    bldgIMs.forEach(function (im) { im.castShadow = true; im.receiveShadow = true; });
+    trunks.castShadow = true; leavesConif.castShadow = true; leavesBlob.castShadow = true;
+    lampPoles.castShadow = true; pBody.castShadow = true;
+
+    // drifting cloud sprites — static positions, tinted/dimmed by time of day
+    var cloudMat = new THREE.SpriteMaterial({ map: makeCloudTex(), transparent: true, opacity: 0.65, depthWrite: false, fog: false });
+    var clouds = new THREE.Group();
+    for (k = 0; k < 14; k++) {
+      var csp = new THREE.Sprite(cloudMat);
+      csp.position.set(bhash(k * 3, 7) * WORLD * 1.4 - WORLD * 0.2, 175 + bhash(k, 11) * 80, bhash(k * 7, 3) * WORLD * 1.4 - WORLD * 0.2);
+      var cw = 90 + bhash(k, k * 5) * 130; csp.scale.set(cw, cw * 0.4, 1);
+      clouds.add(csp);
+    }
+    scene.add(clouds);
 
     /* ------ SF landmarks: bounded static meshes (draw-call count is O(1), not grid-scaled) ------ */
     // Golden Gate bridge — the road tiles across the strait are the DRIVING surface; this adds
@@ -1614,7 +1971,7 @@
 
       return groups;
     }
-    var cityHideable = [ground, roads, parks, bldgs, trunks, leaves, water, sidewalks, roofs, storefrontGroup];
+    var cityHideable = [ground, lampGlow, clouds, storefrontGroup].concat(cityIMs);
     var _sfLM = buildSFLandmarks(); for (var _lmi = 0; _lmi < _sfLM.length; _lmi++) cityHideable.push(_sfLM[_lmi]);
     var _sfLM2 = buildMoreLandmarks(); for (var _lm2 = 0; _lm2 < _sfLM2.length; _lm2++) cityHideable.push(_sfLM2[_lm2]);
     var _bk = buildBanks(); for (var _bki = 0; _bki < _bk.length; _bki++) cityHideable.push(_bk[_bki]);
@@ -1679,28 +2036,28 @@
       // ── MATERIALS ────────────────────────────────────────────────────────────
       var matGlassCap = new THREE.MeshStandardMaterial({
         color: 0x88b8d8, roughness: 0.08, metalness: 0.55,
-        transparent: true, opacity: 0.80, vertexColors: true
+        transparent: true, opacity: 0.80
       });
       var matSpire = new THREE.MeshStandardMaterial({
-        color: 0xb8ccd8, roughness: 0.15, metalness: 0.70, vertexColors: true
+        color: 0xb8ccd8, roughness: 0.15, metalness: 0.70
       });
       var matVRoof = new THREE.MeshStandardMaterial({
-        color: 0xc0896a, roughness: 0.82, metalness: 0.04, vertexColors: true
+        color: 0xc0896a, roughness: 0.82, metalness: 0.04
       });
       var matBayWin = new THREE.MeshStandardMaterial({
-        color: 0xffffff, roughness: 0.70, metalness: 0.06, vertexColors: true
+        color: 0xffffff, roughness: 0.70, metalness: 0.06
       });
       var matParapet = new THREE.MeshStandardMaterial({
-        color: 0x9a9c9e, roughness: 0.92, metalness: 0.05, vertexColors: true
+        color: 0x9a9c9e, roughness: 0.92, metalness: 0.05
       });
       var matSawtooth = new THREE.MeshStandardMaterial({
-        color: 0x7a7260, roughness: 0.90, metalness: 0.08, vertexColors: true
+        color: 0x7a7260, roughness: 0.90, metalness: 0.08
       });
       var matDock = new THREE.MeshStandardMaterial({
-        color: 0x3a3830, roughness: 0.88, metalness: 0.10, vertexColors: true
+        color: 0x3a3830, roughness: 0.88, metalness: 0.10
       });
       var matPlinth = new THREE.MeshStandardMaterial({
-        color: 0x1e2028, roughness: 0.82, metalness: 0.12, vertexColors: true
+        color: 0x1e2028, roughness: 0.82, metalness: 0.12
       });
 
       // ── GEOMETRIES + INSTANCED MESHES ────────────────────────────────────────
@@ -2244,6 +2601,9 @@
     // Shared (allocate once) — the pools reuse these across all entities.
     var carWheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.3, 12); carWheelGeo.rotateZ(Math.PI / 2);
     var carWheelMat = new THREE.MeshStandardMaterial({ color: 0x111114, roughness: 0.7, metalness: 0.1 });
+    var carHubGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.32, 8); carHubGeo.rotateZ(Math.PI / 2);
+    var carHubMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.3, metalness: 0.8 });
+    var carTrimMat = new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.55, metalness: 0.3 });
     var carGlassMat = new THREE.MeshStandardMaterial({ color: 0x1b2735, roughness: 0.15, metalness: 0.3 });
     var carHeadMat = new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffd24a, emissiveIntensity: 0.6, roughness: 0.4 });
     var carTailMat = new THREE.MeshStandardMaterial({ color: 0x551111, emissive: 0xff2222, emissiveIntensity: 0.5, roughness: 0.4 });
@@ -2272,23 +2632,35 @@
     function carMesh(color, police) {
       var g = new THREE.Group();
       var W2 = K.CAR_HALF_W, L2 = K.CAR_HALF_L;
-      var bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.35, metalness: 0.45 });
-      var body = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 2, 0.55, L2 * 2), bodyMat));
-      body.position.y = 0.55; g.add(body);
-      var hoodF = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.9, 0.34, L2 * 0.7), bodyMat)); hoodF.position.set(0, 0.82, L2 * 0.62); g.add(hoodF);
-      var hoodR = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.9, 0.34, L2 * 0.7), bodyMat)); hoodR.position.set(0, 0.82, -L2 * 0.62); g.add(hoodR);
-      var cab = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.75, 0.62, L2 * 0.9), bodyMat)); cab.position.set(0, 1.18, -L2 * 0.08); g.add(cab);
-      var wsF = new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.55, 0.5, 0.1), carGlassMat); wsF.position.set(0, 1.18, L2 * 0.42); wsF.rotation.x = 0.5; g.add(wsF);
-      var wsR = new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.55, 0.5, 0.1), carGlassMat); wsR.position.set(0, 1.18, -L2 * 0.5); wsR.rotation.x = -0.5; g.add(wsR);
-      var hlL = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.16, 0.08), carHeadMat); hlL.position.set(-W2 * 0.6, 0.6, L2); g.add(hlL);
-      var hlR = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.16, 0.08), carHeadMat); hlR.position.set(W2 * 0.6, 0.6, L2); g.add(hlR);
-      var tlL = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.16, 0.08), carTailMat); tlL.position.set(-W2 * 0.6, 0.6, -L2); g.add(tlL);
-      var tlR = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.16, 0.08), carTailMat); tlR.position.set(W2 * 0.6, 0.6, -L2); g.add(tlR);
-      var wheels = [], wo = [[-W2 * 0.9, -L2 * 0.66], [W2 * 0.9, -L2 * 0.66], [-W2 * 0.9, L2 * 0.66], [W2 * 0.9, L2 * 0.66]];
-      for (var wi = 0; wi < 4; wi++) { var w = shadowy(new THREE.Mesh(carWheelGeo, carWheelMat)); w.position.set(wo[wi][0], 0.34, wo[wi][1]); g.add(w); wheels.push(w); }
+      // one body material per car: syncCarGroup recolors g._body.material, repainting
+      // every body-colored panel (hood, trunk, roof, pillars) in one call.
+      var bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.25, metalness: 0.6 });
+      var body = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 2, 0.5, L2 * 2), bodyMat));
+      body.position.y = 0.62; g.add(body);
+      var skirt = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.86, 0.22, L2 * 1.9), carTrimMat)); skirt.position.y = 0.34; g.add(skirt);
+      var hood = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.92, 0.16, L2 * 0.68), bodyMat)); hood.position.set(0, 0.93, L2 * 0.6); hood.rotation.x = 0.045; g.add(hood);
+      var trunk = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.92, 0.16, L2 * 0.62), bodyMat)); trunk.position.set(0, 0.93, -L2 * 0.64); trunk.rotation.x = -0.045; g.add(trunk);
+      // greenhouse: wrap-around dark glass band + body-colored roof panel
+      var glass = new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.66, 0.42, L2 * 1.02), carGlassMat); glass.position.set(0, 1.18, -L2 * 0.06); g.add(glass);
+      var roofP = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.6, 0.1, L2 * 0.9), bodyMat)); roofP.position.set(0, 1.42, -L2 * 0.06); g.add(roofP);
+      var wsF = new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.58, 0.52, 0.08), carGlassMat); wsF.position.set(0, 1.16, L2 * 0.46); wsF.rotation.x = 0.55; g.add(wsF);
+      var wsR = new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.58, 0.5, 0.08), carGlassMat); wsR.position.set(0, 1.16, -L2 * 0.58); wsR.rotation.x = -0.5; g.add(wsR);
+      // bumpers + grille (dark trim grounds the silhouette)
+      var bmF = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 2.04, 0.24, 0.22), carTrimMat)); bmF.position.set(0, 0.42, L2 - 0.04); g.add(bmF);
+      var bmR = shadowy(new THREE.Mesh(new THREE.BoxGeometry(W2 * 2.04, 0.24, 0.22), carTrimMat)); bmR.position.set(0, 0.42, -L2 + 0.04); g.add(bmR);
+      var grille = new THREE.Mesh(new THREE.BoxGeometry(W2 * 1.1, 0.16, 0.06), carTrimMat); grille.position.set(0, 0.66, L2 + 0.02); g.add(grille);
+      var hlL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.08), carHeadMat); hlL.position.set(-W2 * 0.64, 0.72, L2); g.add(hlL);
+      var hlR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.08), carHeadMat); hlR.position.set(W2 * 0.64, 0.72, L2); g.add(hlR);
+      var tlL = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.08), carTailMat); tlL.position.set(-W2 * 0.62, 0.72, -L2); g.add(tlL);
+      var tlR = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.08), carTailMat); tlR.position.set(W2 * 0.62, 0.72, -L2); g.add(tlR);
+      var wheels = [], wo = [[-W2 * 0.92, -L2 * 0.64], [W2 * 0.92, -L2 * 0.64], [-W2 * 0.92, L2 * 0.64], [W2 * 0.92, L2 * 0.64]];
+      for (var wi = 0; wi < 4; wi++) {
+        var w = shadowy(new THREE.Mesh(carWheelGeo, carWheelMat)); w.position.set(wo[wi][0], 0.34, wo[wi][1]); g.add(w); wheels.push(w);
+        var hub = new THREE.Mesh(carHubGeo, carHubMat); w.add(hub);  // hubcap rides the spinning wheel
+      }
       if (police) {
         var lb = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.22, 0.4), new THREE.MeshStandardMaterial({ color: 0x3344ff, emissive: 0x2233cc, emissiveIntensity: 0.4 }));
-        lb.position.set(0, 1.62, 0); g.add(lb); g._lightbar = lb;
+        lb.position.set(0, 1.56, -L2 * 0.06); g.add(lb); g._lightbar = lb;
       }
       g._body = body; g._wheels = wheels;
       return g;
@@ -3027,9 +3399,20 @@
       else { skyMat.color.copy(_skyBot); }
       _fogCol.copy(_skyBot); scene.fog.color.copy(_fogCol); scene.background.copy(_skyBot);
       scene.fog.near = 320 - wet * 90; scene.fog.far = 1000 - wet * 240; // widened for WORLD=1120; denser haze in the wet
-      // windows glow as it gets dark
-      bldgs.material.emissiveIntensity = 0.12 + (1 - day) * 1.0;
+      // windows glow as it gets dark (per facade class — glass towers run brighter)
+      var glow = 0.10 + (1 - day) * 1.05;
+      for (var fi = 0; fi < facadeMats.length; fi++) facadeMats[fi].emissiveIntensity = glow * facadeMats[fi]._glow;
+      // streetlights + vehicle lights wake up at dusk
+      lampHeadMat.emissiveIntensity = 0.15 + (1 - day) * 2.6;
+      lampGlowMat.opacity = Math.max(0, (1 - day) - 0.2) * 0.95;
+      carHeadMat.emissiveIntensity = 0.25 + (1 - day) * 1.7;
+      carTailMat.emissiveIntensity = 0.25 + (1 - day) * 1.3;
+      // clouds: white by day, dim slate at night, warmed at golden hour
+      _cloudC.setRGB(1, 1, 1).lerp(NIGHT_CLOUD, 1 - day).lerp(DUSK_CLOUD, dusk * 0.55);
+      cloudMat.color.copy(_cloudC);
+      cloudMat.opacity = 0.3 + day * 0.4 - wet * 0.1;
     }
+    var _cloudC = new THREE.Color(), NIGHT_CLOUD = new THREE.Color(0x2c3450), DUSK_CLOUD = new THREE.Color(0xffc9a0);
     var _greyC = new THREE.Color();
     function _grey(c, amt) { var l = 0.3 * c.r + 0.59 * c.g + 0.11 * c.b; _greyC.setRGB(c.r + (l - c.r) * amt, c.g + (l - c.g) * amt, c.b + (l - c.b) * amt); return _greyC; }
 

@@ -53,7 +53,7 @@ var SHOT = path.resolve(__dirname, '..', 'boot3d.png');
 
     // dismiss the start menu (New Game), then let the render loop run real time
     await page.evaluate(function () { if (window.__startGame) window.__startGame(); });
-    await new Promise(function (r) { setTimeout(r, 2500); });
+    await new Promise(function (r) { setTimeout(r, 6000); });  // SwiftShader renders ~2fps; 6s ≈ 12 frames ≫ the 0.5s sim-time bar
 
     // proof the loop ran & stepped the sim: the menu hides on start AND world.time advanced
     var run = await page.evaluate(function () {
