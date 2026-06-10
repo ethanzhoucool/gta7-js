@@ -1122,6 +1122,7 @@ function run() {
   //     time; winning pays + chains the level up; fails break the chain.
   (function raceChecks() {
     var re2 = GTA3D.createEngine(), RW = re2.world, RIN = re2._internal;
+    RW.eventCd = 99999;  // keep ambient muggings out of this engine — their peds stand on roads
     assert.ok(RW.raceStarts && RW.raceStarts.length >= 3, 'race starts placed');
     RW.player.inCar = false; RW.playerCar = null;
     RW.player.x = RW.raceStarts[0].x; RW.player.z = RW.raceStarts[0].z;
@@ -1141,7 +1142,8 @@ function run() {
     }
     assert.ok(!RW.race, 'race completed');
     assert.strictEqual(RW.racesDone, 1, 'win counted');
-    assert.strictEqual(RW.money, m0 + reward1, 'reward paid in full');
+    // ≥ not ===: teleporting the car gate-to-gate can roadkill a ped, which also pays
+    assert.ok(RW.money >= m0 + reward1, 'race reward paid (got +' + (RW.money - m0) + ', purse ' + reward1 + ')');
     assert.ok(RW.rep > rep0, 'race pays rep');
     assert.strictEqual(RW.raceLevel, 1, 'win sets the chain level');
     // chain escalates: next race is longer and pays more
@@ -1265,7 +1267,9 @@ function run() {
     assert.ok(IN.startStreetEvent() === false, 'startStreetEvent blocked while wanted > 0');
     SW.wanted = 0;
 
-    // spawns when calm
+    // spawns when calm. Stand mid-city first: the default spawn hugs the south map
+    // edge where the spawn annulus is mostly water and the road sampler can miss.
+    SW.player.x = SW.raceStarts[0].x; SW.player.z = SW.raceStarts[0].z;
     assert.ok(IN.startStreetEvent() === true, 'startStreetEvent succeeds when calm');
     assert.ok(SW.event && SW.event.type === 'mugging', 'W.event set with type mugging');
     var mugger0 = null, victim0 = null;
@@ -1312,7 +1316,71 @@ function run() {
     checkInvariants(se, 'street-event');
   })();
 
-  // 16) dt extremes
+  // 16) safehouse garage: stash and retrieve a car at the owned home door.
+  (function garageChecks() {
+    var ge = GTA3D.createEngine(), GW = ge.world, IN = ge._internal;
+
+    // no home owned -> tryGarage returns false
+    assert.ok(GW.homePropIndex == null, 'no home before purchase');
+    assert.ok(IN.tryGarage() === false, 'tryGarage returns false with no home');
+
+    // buy apartment 0 and set up: player in a car at the door
+    GW.money = 50000; GW.player.inCar = false;
+    assert.ok(IN.buyItem('realty', 0) === true && GW.ownedProps.indexOf(0) >= 0, 'apartment 0 bought');
+    var door = GW.propPos[0];
+    // pick a car and make the player drive it
+    var car = GW.cars[0];
+    car.npc = null; car.driver = 'player'; GW.player.inCar = true; GW.playerCar = car; GW.player.car = car;
+    car.color = 0x123456; car.onFire = false; car.exploded = false; car.tier = 1;
+    // position player+car at the door
+    GW.player.x = door.x; GW.player.z = door.z; car.x = door.x; car.z = door.z;
+    var carsBefore = GW.cars.length;
+    assert.ok(IN.tryGarage() === true, 'tryGarage returns true when in a car at the door');
+    assert.ok(GW.garage && GW.garage.color === 0x123456, 'garage stores the correct color (got ' + (GW.garage && GW.garage.color) + ')');
+    assert.ok(GW.cars.indexOf(car) < 0, 'stashed car is removed from W.cars');
+    assert.strictEqual(GW.cars.length, carsBefore - 1, 'W.cars shrank by 1');
+    assert.ok(!GW.player.inCar && GW.playerCar == null, 'player is on foot after stash');
+
+    // far away on foot -> tryGarage returns false (garage slot stays)
+    GW.player.x = door.x + 200; GW.player.z = door.z;
+    assert.ok(IN.tryGarage() === false, 'tryGarage returns false when far from door');
+    assert.ok(GW.garage !== null, 'garage slot unchanged when far away');
+
+    // at the door on foot -> retrieve spawns a real drivable car
+    GW.player.x = door.x; GW.player.z = door.z;
+    var carsNow = GW.cars.length;
+    assert.ok(IN.tryGarage() === true, 'tryGarage returns true when retrieving on foot');
+    assert.ok(GW.garage === null, 'garage slot cleared after retrieval');
+    assert.strictEqual(GW.cars.length, carsNow + 1, 'W.cars grew by 1 (a real car entity)');
+    // find the newly spawned car: it has the right color, is within 30u of the door, has no npc, no driver
+    var found = null;
+    for (var ci = 0; ci < GW.cars.length; ci++) {
+      var cc = GW.cars[ci];
+      if (cc.color === 0x123456) {
+        var ddoor = Math.hypot(cc.x - door.x, cc.z - door.z);
+        if (ddoor <= 30) { found = cc; break; }
+      }
+    }
+    assert.ok(found !== null, 'retrieved car with correct color exists within 30u of the door');
+    assert.ok(!found.npc, 'retrieved car has no npc driver field');
+    assert.ok(found.driver == null || found.driver !== 'player', 'retrieved car is not auto-entered (player must get in manually)');
+
+    // save/load roundtrip: stash again, serialize, fresh engine, apply
+    car.npc = null; car.driver = 'player'; GW.player.inCar = true; GW.playerCar = car; GW.player.car = car;
+    car.color = 0x123456; car.tier = 1; car.onFire = false; car.exploded = false;
+    GW.player.x = door.x; GW.player.z = door.z; car.x = door.x; car.z = door.z;
+    GW.cars.push(car); // re-add so we can stash again (it was already removed above)
+    IN.tryGarage();
+    assert.ok(GW.garage && GW.garage.color === 0x123456, 'stashed for save roundtrip test');
+    var snap = JSON.parse(JSON.stringify(IN.serializeSave()));
+    var le = GTA3D.createEngine(), LIN = le._internal;
+    assert.ok(LIN.applySave(snap) === true, 'applySave succeeds');
+    assert.ok(le.world.garage && le.world.garage.color === 0x123456, 'garage color survives save/load (got ' + (le.world.garage && le.world.garage.color) + ')');
+
+    checkInvariants(ge, 'garage');
+  })();
+
+  // 17) dt extremes
   eng.step(0, {}); eng.step(0.1, {}); checkInvariants(eng, 'dt-extreme');
 
   console.log('PASS — ' + total + ' steps simulated with no errors.');

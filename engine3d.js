@@ -192,6 +192,7 @@
       stores: [],               // robbable convenience stores (repeatable earners)
       ownedCarTier: 0,          // index into CAR_TIERS for the player's respawn car
       carMods: { engine: 1, top: 1, grip: 1, turn: 1, paint: null }, // persistent vehicle customization
+      garage: null,             // one stored-car snapshot { color, tier } — stashed at the safehouse door
       ownedProps: [],           // indices of bought apartments (safehouses + passive income)
       incomeAccrued: 0,         // passive income drip, paid out on a cadence
       goals: [], netWorth: 0,
@@ -585,6 +586,40 @@
       return true;
     }
 
+    // garage: drive to the owned home door and press G to stash the car; press G on foot to retrieve.
+    // Only one slot. The car is a real W.cars member on retrieval — not a prop.
+    function tryGarage() {
+      var hi = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : -1;
+      if (hi < 0 || !W.propPos || !W.propPos[hi]) return false;
+      var door = W.propPos[hi];
+      if (d2(W.player.x, W.player.z, door.x, door.z) >= 10 * 10) return false;
+      if (W.interior) return false;
+      var p = W.player;
+      if (p.inCar && W.playerCar) {
+        // STORE: snapshot and remove the car
+        var car = W.playerCar;
+        if (car.onFire || car.exploded) return false; // don't stash a burning wreck
+        W.garage = { color: car.color, tier: (car.tier != null ? car.tier : null) };
+        var idx = W.cars.indexOf(car); if (idx >= 0) W.cars.splice(idx, 1);
+        car.driver = null; W.playerCar = null; p.inCar = false; p.car = null;
+        p.x = door.x; p.z = door.z;
+        post('@you', '🏠 Ride stashed in the garage.');
+        return true;
+      }
+      if (!p.inCar && W.garage) {
+        // RETRIEVE: spawn a real car next to the door (mirrors the car-shop purchase path)
+        var pt = roadNear(door.x, door.z, 4, 22) || { x: door.x + 3, z: door.z + 3 };
+        var c = makeCar(pt.x, pt.z, null);
+        if (W.garage.tier != null) applyCarTier(c, W.garage.tier);
+        c.color = W.garage.color; // restore after applyCarTier (which stamps the tier's default color)
+        W.cars.push(c);
+        W.garage = null;
+        post('@you', '🔑 Your ride is waiting by the curb.');
+        return true;
+      }
+      return false;
+    }
+
     // robbable store: stand on it (on foot) and hold to rob; small fast-cooldown earner
     function robStore() {
       if (W.player.inCar) return false;
@@ -741,6 +776,7 @@
         racesDone: W.racesDone | 0, raceLevel: W.raceLevel | 0,
         packagesGot: W.packages.map(function (pk) { return !!pk.got; }),
         ownedCarTier: W.ownedCarTier, carMods: { engine: W.carMods.engine, top: W.carMods.top, grip: W.carMods.grip, turn: W.carMods.turn, paint: W.carMods.paint },
+        garage: W.garage ? { color: W.garage.color, tier: W.garage.tier } : null,
         ownedProps: W.ownedProps.slice(), homePropIndex: W.homePropIndex,
         ownedBiz: W.ownedBiz.slice(), bizVault: W.bizVault.slice(),
         zonesOwned: W.zones.map(function (z) { return !!z.owned; }),
@@ -758,6 +794,7 @@
       W.ownedCarTier = s.ownedCarTier | 0; W.ownedProps = (s.ownedProps || []).slice(); W.homePropIndex = (s.homePropIndex == null ? null : (s.homePropIndex | 0));
       W.ownedBiz = (s.ownedBiz || []).slice(); W.bizVault = (s.bizVault || []).slice();
       if (s.carMods) { W.carMods.engine = s.carMods.engine || 1; W.carMods.top = s.carMods.top || 1; W.carMods.grip = s.carMods.grip || 1; W.carMods.turn = s.carMods.turn || 1; W.carMods.paint = (s.carMods.paint == null ? null : s.carMods.paint); }
+      W.garage = s.garage ? { color: s.garage.color, tier: (s.garage.tier == null ? null : s.garage.tier) } : null; // old saves → null
       if (s.zonesOwned) for (var zi = 0; zi < W.zones.length; zi++) { if (s.zonesOwned[zi]) { W.zones[zi].owned = true; } }
       W.ownedZones = W.zones.filter(function (z) { return z.owned; }).length;
       if (s.milestones) { W.milestones = {}; for (var mk in s.milestones) if (s.milestones.hasOwnProperty(mk)) W.milestones[mk] = s.milestones[mk]; }
@@ -1006,7 +1043,10 @@
     var EVENT_TIME = 30, EVENT_DRAIN = 2.5;
     function startStreetEvent() {
       if (W.event || W.wanted > 0 || W.interior || W.race || W.heist) return false;
-      var pt = roadNear(W.player.x, W.player.z, 30, 70); if (!pt) return false;
+      // widen the ring if the first pass misses — near the map edge (e.g. the south
+      // spawn) half the 30-70u annulus is water/off-map and the sampler comes up dry
+      var pt = roadNear(W.player.x, W.player.z, 30, 70) || roadNear(W.player.x, W.player.z, 20, 130);
+      if (!pt) return false;
       var victim = makePed(pt.x, pt.z, false);
       victim.eventVictim = true;
       victim.speed = 0; victim.think = 9999; // keep the victim standing still while event is active
@@ -1288,7 +1328,7 @@
       W.wanted = 0; W.lkpValid = false; W.seen = false; W.searchTimer = 0; W.disguiseCd = 0;
       W.money = 0; W.kills = 0; W.fireCd = 0; W.feed = [];
       // economy reset
-      W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.carMods = { engine: 1, top: 1, grip: 1, turn: 1, paint: null }; W.ownedProps = []; W.homePropIndex = null; W.incomeAccrued = 0; W.netWorth = 0;
+      W.currentShop = null; W.shopIndex = 0; W.ownedCarTier = 0; W.carMods = { engine: 1, top: 1, grip: 1, turn: 1, paint: null }; W.garage = null; W.ownedProps = []; W.homePropIndex = null; W.incomeAccrued = 0; W.netWorth = 0;
       W.helis = []; W.heliCd = 0; W.roadblockCd = 0;
       // gameplay-loop reset
       W.popups = [];
@@ -2148,6 +2188,7 @@
       if (input.buyPressed) tryOpenOrBuy();
       if (input.cyclePressed) cycleShop();
       if (input.safehousePressed) enterSafehouse();
+      if (input.garagePressed) tryGarage();
       if (input.jobPressed) { if (!startRace()) acceptJob(); }  // J: race when in a car at a 🏁, else courier
       if (input.weaponSlot >= 0 && input.weaponSlot !== undefined) switchWeapon(WEAPON_ORDER[input.weaponSlot]);
       if (input.weaponCyclePressed) cycleWeapon(1);
@@ -2221,7 +2262,7 @@
       _internal: { tryEnterExit: tryEnterExit, robNearest: robNearest, fireWeapon: fireWeapon, commitCrime: commitCrime,
         lineOfSight: lineOfSight, circleHitsSolid: circleHitsSolid, nearestCar: nearestCar, reset: reset, alertPolice: alertPolice,
         hurtPlayer: hurtPlayer, buyItem: buyItem, shopCatalog: shopCatalog, nearestShop: nearestShop, nearestProperty: nearestProperty,
-        robStore: robStore, enterSafehouse: enterSafehouse, enterShop: enterShop, enterHome: enterHome, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
+        robStore: robStore, enterSafehouse: enterSafehouse, tryGarage: tryGarage, enterShop: enterShop, enterHome: enterHome, exitShop: exitShop, spawnPlayer: spawnPlayer, applyCarTier: applyCarTier, CAR_TIERS: CAR_TIERS, PROPERTY_DEFS: PROPERTY_DEFS,
         killPed: killPed, acceptJob: acceptJob, completeJob: completeJob, failJob: failJob, nearestDepot: nearestDepot, makeCopFoot: makeCopFoot,
         startRace: startRace, failRace: failRace, nearestRaceStart: nearestRaceStart,
         startVigilante: startVigilante, startRampage: startRampage, findPedById: findPedById,

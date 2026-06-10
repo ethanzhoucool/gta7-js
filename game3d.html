@@ -137,7 +137,7 @@
   <div id="shop" class="ui"></div>
   <div id="banner" class="ui"></div>
   <canvas id="mini" class="ui" width="170" height="170"></canvas>
-  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · <b>J job/race · K skills · 1-4/Q weapon</b></div>
+  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · G garage · <b>J job/race · K skills · 1-4/Q weapon</b></div>
   <div id="touchUI">
     <div id="tStickBase"></div>
     <div id="tStickKnob"></div>
@@ -2788,7 +2788,7 @@
 
     /* ----------------------------- Input ---------------------------------- */
     var keys = {}, justF = false, justE = false, justSpace = false, justB = false, justN = false, justH = false;
-    var justJ = false, justQ = false, weaponSlot = -1; // job / weapon-cycle / weapon-slot edges
+    var justJ = false, justQ = false, justG = false, weaponSlot = -1; // job / weapon-cycle / garage / weapon-slot edges
     var mouseDown = false, rmbDown = false, locked = false;
     var camYaw = 0, camPitch = -0.18;   // look pitch: + up, − down. default slightly down (3/4 view)
     // smoothing state for the better third-person feel (position springs, look-ahead, FOV, etc.)
@@ -2809,7 +2809,7 @@
         }
         if (e.code === 'KeyF') justF = true; if (e.code === 'KeyE') justE = true; if (e.code === 'Space') justSpace = true;
         if (e.code === 'KeyB') justB = true; if (e.code === 'KeyN') justN = true; if (e.code === 'KeyH') justH = true;
-        if (e.code === 'KeyJ') justJ = true; if (e.code === 'KeyQ') justQ = true;
+        if (e.code === 'KeyJ') justJ = true; if (e.code === 'KeyQ') justQ = true; if (e.code === 'KeyG') justG = true;
         if (e.code === 'Digit1') weaponSlot = 0; if (e.code === 'Digit2') weaponSlot = 1;
         if (e.code === 'Digit3') weaponSlot = 2; if (e.code === 'Digit4') weaponSlot = 3;
       }
@@ -3313,6 +3313,13 @@
       elWasted.style.display = (W.state === 'wasted') ? 'flex' : 'none';
       // contextual prompt (vehicle / shop / store / safehouse / job depot)
       var pr = '';
+      // compute home-door distance once, used by both on-foot and in-car branches
+      var _homeDoor2 = (function () {
+        var hi2 = (W.homePropIndex != null && W.ownedProps.indexOf(W.homePropIndex) >= 0) ? W.homePropIndex : -1;
+        if (hi2 < 0 || !W.propPos || !W.propPos[hi2]) return 1e9;
+        var hd = W.propPos[hi2], dx2 = hd.x - W.player.x, dz2 = hd.z - W.player.z;
+        return dx2 * dx2 + dz2 * dz2;
+      })();
       if (!W.player.inCar) {
         // The [F] label must match what tryEnterExit actually does: F enters the CLOSEST of
         // {car, shop, owned-home} (radii mirror the engine: car 4.5, shop 5.5, home 4.0).
@@ -3332,10 +3339,12 @@
         }
         if (ns && _sd !== _fmin) pr = (pr ? pr + '   ' : '') + '[B] ' + ns.name; // shop in range but not the F-target → still offer its menu
         if (IN.nearestProperty(6) >= 0) pr = (pr ? pr + '   ' : '') + '[H] Lie low (safehouse)';
+        if (W.garage && _homeDoor2 < 10 * 10) pr = (pr ? pr + '   ' : '') + '[G] Get your car 🔑';
         if (!W.job && IN.nearestDepot(6.5)) pr = (pr ? pr + '   ' : '') + '[J] Courier job';
         if (!W.heist && IN.nearestBank && IN.nearestBank(7)) pr = '[E] Rob the bank 🏦';   // big-score prompt (E = rob)
       } else {
         pr = '[F] Exit vehicle';
+        if (_homeDoor2 < 10 * 10) pr += '   [G] Store car in garage';
         if (!W.race && IN.nearestRaceStart && IN.nearestRaceStart(9)) pr += '   [J] Street race 🏁';
         else if (!W.job && IN.nearestDepot(6.5)) pr += '   [J] Courier job';
       }
@@ -3488,7 +3497,7 @@
         return { forward: false, back: false, left: false, right: false, run: false, jump: false, handbrake: false,
           aim: false, shoot: false, camYaw: camYaw, aimYaw: camYaw, aimPitch: 0, enterPressed: false, robPressed: false,
           jumpPressed: false, buyPressed: false, cyclePressed: false, safehousePressed: false, jobPressed: false,
-          weaponCyclePressed: false, weaponSlot: -1 };
+          garagePressed: false, weaponCyclePressed: false, weaponSlot: -1 };
       }
       var p = W.player, inCar = p.inCar;
       var spaceHeld = !!keys['Space'];
@@ -3507,7 +3516,7 @@
         shoot: mouseDown && locked
       };
       if (withEdges) { inp.enterPressed = justF; inp.robPressed = justE; inp.jumpPressed = !inCar && justSpace; inp.buyPressed = justB; inp.cyclePressed = justN; inp.safehousePressed = justH;
-        inp.jobPressed = justJ; inp.weaponCyclePressed = justQ; inp.weaponSlot = weaponSlot; }
+        inp.jobPressed = justJ; inp.garagePressed = justG; inp.weaponCyclePressed = justQ; inp.weaponSlot = weaponSlot; }
       else { inp.weaponSlot = -1; } // only the first substep consumes the slot edge
       return inp;
     }
@@ -3924,7 +3933,7 @@
       // periodic autosave (every ~15s of play)
       if (gameStarted) { saveClock += dt; if (saveClock >= 15) { saveClock = 0; saveGame(); } }
       justF = false; justE = false; justSpace = false; justB = false; justN = false; justH = false;
-      justJ = false; justQ = false; weaponSlot = -1; // edges consumed for this frame
+      justJ = false; justQ = false; justG = false; weaponSlot = -1; // edges consumed for this frame
 
       updateCamera(dt);
       applyTimeOfDay();   // day/night + weather → sun, sky, fog, hemi, window glow
