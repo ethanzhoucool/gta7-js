@@ -137,7 +137,7 @@
   <div id="shop" class="ui"></div>
   <div id="banner" class="ui"></div>
   <canvas id="mini" class="ui" width="170" height="170"></canvas>
-  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · G garage · <b>J job/race · K skills · 1-4/Q weapon</b></div>
+  <div id="controls" class="ui">WASD · Space jump/handbrake · R-click aim · Click shoot · F enter/CARJACK · E rob · B shop/N next · H safehouse · G garage · <b>J job/race · K skills · 1-4/Q weapon</b> · M mute</div>
   <div id="touchUI">
     <div id="tStickBase"></div>
     <div id="tStickKnob"></div>
@@ -3521,6 +3521,213 @@
       return inp;
     }
 
+    /* ===================== Procedural audio (WebAudio, no files) ========= */
+    var _actx = null;       // AudioContext — null until first user gesture
+    var _masterGain = null; // master gain → destination (0.25 normal, 0 muted)
+    var _audioMute = false;
+    var _audioReady = false;
+    var _noiseBuffer = null; // shared 1-second white-noise buffer (built once)
+
+    // engine osc + siren nodes (continuous layers)
+    var _engOsc = null, _engGain = null;
+    var _siren1 = null, _siren2 = null, _sirenGain = null;
+    var _windNode = null, _windGain = null;
+
+    // per-frame state for level & event detection
+    var _prevMoney = 0, _prevHp = 0, _prevLevel = 0;
+    var _prevState = 'play';
+    var _lastCashDing = 0; // W.time of last cash ding
+
+    function _initAudio() {
+      if (_audioReady) return;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try {
+        _actx = new AC();
+        _masterGain = _actx.createGain();
+        try { _audioMute = (localStorage.getItem('gta7_mute') === '1'); } catch(e) {}
+        _masterGain.gain.value = _audioMute ? 0 : 0.25;
+        _masterGain.connect(_actx.destination);
+
+        // shared 1s white-noise buffer
+        var bufLen = _actx.sampleRate;
+        _noiseBuffer = _actx.createBuffer(1, bufLen, _actx.sampleRate);
+        var nd = _noiseBuffer.getChannelData(0);
+        for (var ni = 0; ni < bufLen; ni++) nd[ni] = Math.random() * 2 - 1;
+
+        // engine hum — triangle osc, gain starts at 0
+        _engGain = _actx.createGain(); _engGain.gain.value = 0;
+        _engOsc  = _actx.createOscillator(); _engOsc.type = 'triangle';
+        _engOsc.frequency.value = 80; _engOsc.connect(_engGain);
+        _engGain.connect(_masterGain); _engOsc.start();
+
+        // police siren — two square oscs, alternate via tickAudio
+        _sirenGain = _actx.createGain(); _sirenGain.gain.value = 0;
+        _siren1 = _actx.createOscillator(); _siren1.type = 'square'; _siren1.frequency.value = 700;
+        _siren2 = _actx.createOscillator(); _siren2.type = 'square'; _siren2.frequency.value = 950;
+        // dampen harshness via a dedicated lowpass
+        var _sirenFlt = _actx.createBiquadFilter(); _sirenFlt.type = 'lowpass'; _sirenFlt.frequency.value = 1400;
+        _siren1.connect(_sirenFlt); _siren2.connect(_sirenFlt);
+        _sirenFlt.connect(_sirenGain); _sirenGain.connect(_masterGain);
+        _siren1.start(); _siren2.start();
+
+        // wind/ambience — noise through lowpass (brownish)
+        _windGain = _actx.createGain(); _windGain.gain.value = 0;
+        var _windSrc = _actx.createBufferSource(); _windSrc.buffer = _noiseBuffer;
+        _windSrc.loop = true;
+        var _windFlt = _actx.createBiquadFilter(); _windFlt.type = 'lowpass'; _windFlt.frequency.value = 380;
+        _windSrc.connect(_windFlt); _windFlt.connect(_windGain); _windGain.connect(_masterGain);
+        _windSrc.start();
+
+        _audioReady = true;
+        if (_actx.state === 'suspended') _actx.resume();
+      } catch(e) { _audioReady = false; }
+    }
+
+    // helper: short oscillator blip with exponential decay
+    function blip(freq, dur, type, gain, slideTo) {
+      if (!_audioReady) return;
+      try {
+        var osc = _actx.createOscillator();
+        var g   = _actx.createGain();
+        osc.type = type || 'sine';
+        osc.frequency.value = freq;
+        if (slideTo != null) osc.frequency.exponentialRampToValueAtTime(slideTo, _actx.currentTime + dur);
+        g.gain.setValueAtTime(gain || 0.2, _actx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, _actx.currentTime + dur);
+        osc.connect(g); g.connect(_masterGain);
+        osc.start(); osc.stop(_actx.currentTime + dur + 0.01);
+      } catch(e) {}
+    }
+
+    // helper: burst of white noise through a lowpass, with exponential decay
+    function noiseBurst(dur, filterFreq, gain) {
+      if (!_audioReady) return;
+      try {
+        var src = _actx.createBufferSource(); src.buffer = _noiseBuffer;
+        var flt = _actx.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = filterFreq || 1000;
+        var g   = _actx.createGain();
+        g.gain.setValueAtTime(gain || 0.3, _actx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, _actx.currentTime + dur);
+        src.connect(flt); flt.connect(g); g.connect(_masterGain);
+        src.start(); src.stop(_actx.currentTime + dur + 0.01);
+      } catch(e) {}
+    }
+
+    // one-shot fx sounds: keyed on fx type
+    function _fxSound(type) {
+      if (!_audioReady) return;
+      if (type === 'muzzle') {
+        noiseBurst(0.09, 1800, 0.5);
+        blip(120, 0.08, 'sine', 0.25);
+      } else if (type === 'explode') {
+        noiseBurst(0.6, 400, 0.9);
+        blip(55, 0.5, 'sine', 0.18);
+      } else if (type === 'spark') {
+        noiseBurst(0.04, 4000, 0.18);
+      } else if (type === 'jack') {
+        blip(300, 0.07, 'square', 0.15, 220);
+        var _t = _actx.currentTime;
+        setTimeout(function () { if (_audioReady) blip(220, 0.07, 'square', 0.12); }, 80);
+      }
+    }
+
+    // mute toggle (M key) — wired into the keydown handler below
+    function _toggleMute() {
+      if (!_masterGain) return;
+      _audioMute = !_audioMute;
+      _masterGain.gain.value = _audioMute ? 0 : 0.25;
+      try { localStorage.setItem('gta7_mute', _audioMute ? '1' : '0'); } catch(e) {}
+    }
+
+    // per-frame tick: update continuous layers + fire event sounds
+    function tickAudio(dt) {
+      if (!_audioReady) return;
+      var p = W.player, c = W.playerCar;
+
+      // --- fx one-shots: same "new fx since last frame" logic as the sync loop ---
+      var ft = lastFxTime();
+      for (var fi = 0; fi < W.effects.length; fi++) {
+        var ef = W.effects[fi]; if (ef.t <= ft) continue;
+        _fxSound(ef.type);
+      }
+
+      // --- cash ding: W.money increased since last frame ---
+      if (W.money > _prevMoney && (W.time - _lastCashDing) >= 0.15) {
+        blip(880, 0.08, 'sine', 0.12);
+        var _ct = W.time; _lastCashDing = _ct;
+        setTimeout(function () { if (_audioReady) blip(1320, 0.08, 'sine', 0.10); }, 60);
+      }
+      _prevMoney = W.money;
+
+      // --- hurt: hp dropped ≥1 ---
+      if (p && p.hp < _prevHp - 0.9) { blip(90, 0.12, 'sine', 0.2); }
+      if (p) _prevHp = p.hp;
+
+      // --- level up: W.level increased ---
+      var curLevel = W.level || 1;
+      if (curLevel > _prevLevel && _prevLevel > 0) {
+        blip(523, 0.1, 'sine', 0.12);
+        setTimeout(function () { if (_audioReady) blip(659, 0.1, 'sine', 0.12); }, 110);
+        setTimeout(function () { if (_audioReady) blip(784, 0.1, 'sine', 0.12); }, 220);
+      }
+      _prevLevel = curLevel;
+
+      // --- WASTED: state flipped to 'wasted' ---
+      if (W.state === 'wasted' && _prevState !== 'wasted') {
+        blip(220, 0.4, 'sine', 0.18, 110);
+      }
+      _prevState = W.state;
+
+      // --- engine hum: triangle osc, only in car ---
+      if (_engOsc && _engGain) {
+        var inCar = !!(p && p.inCar && c);
+        var spd = inCar ? Math.hypot(c.vx || 0, c.vz || 0) : 0;
+        var targetFreq = clamp(55 + spd * 6, 55, 230);
+        var targetGain = inCar ? 0.07 : 0;
+        var easeRate = 3 * dt; // ~330ms time constant
+        _engOsc.frequency.value += (targetFreq - _engOsc.frequency.value) * Math.min(easeRate, 1);
+        var curEngGain = _engGain.gain.value;
+        _engGain.gain.value = curEngGain + (targetGain - curEngGain) * Math.min(easeRate, 1);
+      }
+
+      // --- siren: only when wanted + cop within 120u ---
+      if (_siren1 && _siren2 && _sirenGain) {
+        var sirenTarget = 0;
+        if ((W.wanted || 0) >= 1 && W.police && W.police.length > 0) {
+          var px = p ? p.x : 0, pz = p ? p.z : 0, closest = 999;
+          for (var pi2 = 0; pi2 < W.police.length; pi2++) {
+            var cop = W.police[pi2];
+            var dist = Math.hypot((cop.x || 0) - px, (cop.z || 0) - pz);
+            if (dist < closest) closest = dist;
+          }
+          if (closest < 120) sirenTarget = clamp((120 - closest) / 120, 0, 1) * 0.05;
+        }
+        // alternate wail: drive siren2 between 700 and 950 at ~3Hz
+        var flip = (Math.floor(W.time * 3)) % 2 === 0;
+        _siren1.frequency.value = 700;
+        _siren2.frequency.value = flip ? 700 : 950;
+        // gain-crossfade: one quiet the other loud
+        _sirenGain.gain.value += (sirenTarget - _sirenGain.gain.value) * Math.min(4 * dt, 1);
+      }
+
+      // --- wind/ambience: always on while playing, louder in rain ---
+      if (_windGain) {
+        var windBase = (W.state === 'play') ? 0.012 : 0;
+        var windTarget = windBase * ((W.weather === 'rain') ? 1.5 : 1);
+        _windGain.gain.value += (windTarget - _windGain.gain.value) * Math.min(2 * dt, 1);
+      }
+    }
+
+    // lazy audio init on first user gesture (click or keydown)
+    var _audioInitDone = false;
+    function _onGesture() { if (_audioInitDone) return; _audioInitDone = true; _initAudio(); }
+    canvas.addEventListener('click', _onGesture);
+    document.addEventListener('keydown', function _audioKeyInit(e) {
+      _onGesture();
+      if (e.code === 'KeyM') _toggleMute();
+    });
+
     /* ===================== Weapon wheel (Tab to open) ===================== */
     /*
      * p7_weaponwheel.js — GTA-style radial weapon wheel overlay
@@ -3945,6 +4152,7 @@
       // keep the sky dome centered on the camera
       sky.position.copy(camera.position);
       sync(dt);
+      tickAudio(dt);        // procedural sound layer — safe no-op if WebAudio unavailable
       for (var bi = 0; bi < beacons.length; bi++) beacons[bi]._orb.position.y = (beacons[bi].children[0].geometry.parameters.height) + 0.6 + Math.sin(W.time * 2 + bi) * 0.4;
       if (W.heist && W.heist.stage === 'escape') { heistMarker.visible = true; heistMarker.position.set(W.heist.dropX, 0, W.heist.dropZ); heistMarker.children[1].position.y = 16.8 + Math.sin(W.time * 3) * 0.5; }
       else if (heistMarker.visible) heistMarker.visible = false;
